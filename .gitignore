@@ -1,0 +1,48 @@
+# 1. Dữ liệu và Kết quả Thí nghiệm (Quan trọng nhất)
+# Bỏ qua toàn bộ thư mục chứa dữ liệu và kết quả huấn luyện.
+# Chúng thường rất lớn và không nên đưa lên Git.
+data/
+experiments/
+
+# Bỏ qua các file model đã được huấn luyện nếu chúng nằm đâu đó ngoài experiments
+qwen2-quant/
+*.pth
+*.h5
+*.onnx
+
+# 2. Môi trường ảo Python
+# Thư mục môi trường ảo chứa hàng ngàn file và có thể được tạo lại từ requirements.txt
+env/
+venv/
+.venv/
+
+# 3. Cache và các file biên dịch của Python
+# Các file này được Python tự động tạo ra để tăng tốc độ thực thi
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 4. Cấu hình của Trình soạn thảo Code (IDE)
+# Các file này chứa cài đặt cá nhân của mỗi thành viên, không nên chia sẻ
+.vscode/
+.idea/
+
+# 5. Jupyter Notebook
+# Bỏ qua thư mục checkpoint mà Jupyter tự tạo
+.ipynb_checkpoints/
+
+# 6. Các file tạm của Hệ điều hành
+# Các file ẩn do macOS hoặc Windows tạo ra
+.DS_Store
+Thumbs.db
+
+# 7. File chứa thông tin nhạy cảm (Secrets)
+# Rất quan trọng: Không bao giờ commit các file chứa mật khẩu, API key
+.env
+*.env
+
+# 8. Logs
+# Bỏ qua các file log tự tạo
+*.log
+logs/
