@@ -1,8 +1,8 @@
-from toruch.utils.data import Dataset
+from torch.utils.data import Dataset
 import cv2
 import numpy as np
 import albumentations as A
-import tqdm
+from tqdm import tqdm
 from albumentations.pytorch import ToTensorV2
 import random
 import torch

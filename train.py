@@ -7,7 +7,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from config import Config
-from dataset import FloodNetHeavyDataset
+from dataloader import FloodNetHeavyDataset
 from model import HeavyGLNet
 from loss import JointLoss
 from utils import seed_everything, seed_worker, train_one_epoch

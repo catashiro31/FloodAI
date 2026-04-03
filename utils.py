@@ -2,7 +2,7 @@ import os
 import random
 import numpy as np
 import torch
-import tqdm
+from tqdm import tqdm
 from config import Config
 
 def seed_worker():
