@@ -1,4 +1,4 @@
-from fusion import DeepFusionModule
+from model.fusion import DeepFusionModule
 import torch.nn as nn
 import torch.nn.functional as F
 import torch

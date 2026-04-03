@@ -7,7 +7,7 @@ import os
 
 # Import từ thư mục cha
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from loss import JointLoss
+from model.loss import JointLoss
 
 class SSLConsistencyLoss(nn.Module):
     """

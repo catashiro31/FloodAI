@@ -11,7 +11,7 @@ import csv
 
 # Import từ thư mục cha
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from utils import seed_everything, seed_worker
+from model.utils import seed_everything, seed_worker
 from config_ssl import SSLConfig
 from dataloader_ssl import FloodNetSSLDataset
 from model_ssl import FloodWizSSL

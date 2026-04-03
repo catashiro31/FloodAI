@@ -6,11 +6,11 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from config import Config
-from dataloader import FloodNetHeavyDataset
-from model import HeavyGLNet
-from loss import JointLoss
-from utils import seed_everything, seed_worker, train_one_epoch
+from model.config import Config
+from model.dataloader import FloodNetHeavyDataset
+from model.model import HeavyGLNet
+from model.loss import JointLoss
+from model.utils import seed_everything, seed_worker, train_one_epoch
 
 def main():
     seed_everything()

@@ -4,7 +4,7 @@ import os
 
 # Cho phép import từ thư mục cha
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from config import Config
+from model.config import Config
 
 class SSLConfig(Config):
     # Đường dẫn dữ liệu không nhãn

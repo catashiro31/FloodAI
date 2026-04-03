@@ -1,5 +1,5 @@
-from fusion import DeepFusionModule
-from upernet import UperNetHead
+from model.fusion import DeepFusionModule
+from model.upernet import UperNetHead
 import timm
 import torch.nn as nn
 import torch.nn.functional as F

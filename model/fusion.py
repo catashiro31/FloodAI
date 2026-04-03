@@ -1,4 +1,4 @@
-from attention import ChannelAttention, SpatialAttentionGate
+from model.attention import ChannelAttention, SpatialAttentionGate
 import torch
 import torch.nn as nn
 import torchvision.ops as ops

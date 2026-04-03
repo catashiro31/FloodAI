@@ -6,8 +6,8 @@ import os
 
 # Import từ thư mục cha
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from model import HeavyGLNet
-from upernet import UperNetHead
+from model.model import HeavyGLNet
+from model.upernet import UperNetHead
 
 class FloodWizSSL(HeavyGLNet):
     def __init__(self, num_classes, backbone_name, drop_path_rate=0.2):

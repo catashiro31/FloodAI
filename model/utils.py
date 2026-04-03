@@ -3,7 +3,7 @@ import random
 import numpy as np
 import torch
 from tqdm import tqdm
-from config import Config
+from model.config import Config
 
 def seed_worker():
     worker_seed = torch.initial_seed() % 2**32
