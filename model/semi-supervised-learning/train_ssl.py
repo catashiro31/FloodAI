@@ -60,8 +60,33 @@ def main():
 
     # 3. Model & Loss
     model = FloodWizSSL(config.NUM_CLASSES, config.BACKBONE).to(config.DEVICE)
+    
+    # Tối ưu hóa tham số (Weight Decay)
+    def get_optimizer_params(model, lr, weight_decay):
+        param_optimizer = list(model.named_parameters())
+        no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight', 'BatchNorm.weight', 'BatchNorm.bias']
+        optimizer_grouped_parameters = [
+            {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': weight_decay},
+            {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+        ]
+        return optimizer_grouped_parameters
+
+    params = get_optimizer_params(model, config.LR, config.WEIGHT_DECAY if hasattr(config, 'WEIGHT_DECAY') else 1e-4)
+    optimizer = optim.AdamW(params, lr=config.LR)
+    
+    # Learning Rate Scheduler (Warmup + Cosine)
+    def lr_lambda(epoch):
+        warmup_epochs = 5
+        if epoch < warmup_epochs:
+            return float(epoch + 1) / warmup_epochs
+        else:
+            progress = float(epoch - warmup_epochs) / (config.EPOCHS - warmup_epochs)
+            cosine_coeff = 0.5 * (1.0 + np.cos(np.pi * progress))
+            return max(0.05, cosine_coeff)
+
+    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+    
     criterion = SSLJointLoss(config.NUM_CLASSES).to(config.DEVICE)
-    optimizer = optim.AdamW(model.parameters(), lr=config.LR)
     scaler = torch.amp.GradScaler('cuda', enabled=True)
 
     best_miou = 0.0
@@ -122,7 +147,11 @@ def main():
             scaler.update()
             
             epoch_train_loss += total_loss.item()
-            pbar.set_postfix({'Loss': f"{total_loss.item():.4f}", 'Cons': f"{loss_cons.item():.4f}"})
+            curr_lr = optimizer.param_groups[0]['lr']
+            pbar.set_postfix({'Loss': f"{total_loss.item():.4f}", 'Cons': f"{loss_cons.item():.4f}", 'LR': f"{curr_lr:.6f}"})
+
+        # Cập nhật Scheduler sau mỗi Epoch
+        scheduler.step()
 
         # --- PHASE C: VALIDATION ---
         model.eval()
