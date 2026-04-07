@@ -233,13 +233,18 @@ export class ChatService {
       body.session_id,
     );
 
+    this.logger.log(`Recording assistant response for session ${body.session_id}, task ${task.job_id}`);
+    
+    // Đảm bảo ghim Pure Mask (mask_all_overlay) vào phản hồi của Bot trong lịch sử
+    const assistantImageUrls = task.mask_all_overlay ? [task.mask_all_overlay] : [];
+
     await this.conversationService.recordAssistantResponse(
       body.session_id,
       task.job_id,
       reply,
       body.context,
       body.history,
-      task.mask_all_overlay ? [task.mask_all_overlay] : [],
+      assistantImageUrls,
     );
 
     this.realtimeService.sendReply(
@@ -247,10 +252,12 @@ export class ChatService {
       {
         reply,
         jobId: task.job_id,
-        imageUrls: task.mask_all_overlay ? [task.mask_all_overlay] : [],
+        imageUrls: assistantImageUrls,
+        createdAt: new Date().toISOString(),
       },
-      task.session_id,
+      body.session_id || sessionId,
     );
+
     this.realtimeService.sendStatus(
       clientId,
       "Task Completed",

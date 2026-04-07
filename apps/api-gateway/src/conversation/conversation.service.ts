@@ -75,13 +75,13 @@ export class ConversationService {
     imageUrls?: string[],
   ) {
     const session = await this.repository.getSession(sessionId);
-    const nextHistory =
-      history && history.length
-        ? history
-        : [
-            ...(session?.history || []),
-            this.createHistoryItem("assistant", reply, imageUrls),
-          ];
+    const existingHistory = session?.history || [];
+    
+    // Luôn ưu tiên việc append vào lịch sử hiện có của session để tránh mất dữ liệu
+    const nextHistory = [
+      ...existingHistory,
+      this.createHistoryItem("assistant", reply, imageUrls),
+    ];
 
     const nextContext = {
       ...(session?.context || {}),

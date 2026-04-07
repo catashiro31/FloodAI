@@ -160,29 +160,20 @@ def run_segmentation_task(
             )
             return None
 
-        # Lưu mask cục bộ thay vì upload Cloudinary
+        # Lưu mask cục bộ (giờ đây overlay_content chính là pure mask từ inference.py)
         import base64 as b64mod
         masks_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "apps", "api-gateway", "uploads", "masks")
         os.makedirs(masks_dir, exist_ok=True)
         
-        # Lưu mask overlay
         mask_filename = f"{job_id}_mask_all_overlay.png"
         mask_path = os.path.join(masks_dir, mask_filename)
         mask_bytes = b64mod.b64decode(overlay_content)
         with open(mask_path, "wb") as f:
             f.write(mask_bytes)
+            
         mask_all_overlay_url = f"/static/masks/{mask_filename}"
-        
-        # Lưu mask pure
-        pure_mask_url = ""
-        if pure_content:
-            pure_filename = f"{job_id}_mask_pure.png"
-            pure_path = os.path.join(masks_dir, pure_filename)
-            pure_bytes = b64mod.b64decode(pure_content)
-            with open(pure_path, "wb") as f:
-                f.write(pure_bytes)
-            pure_mask_url = f"/static/masks/{pure_filename}"
-            print(f"✅ Pure Mask saved locally: {pure_path}")
+        pure_mask_url = mask_all_overlay_url # Đồng nhất cả 2 URL về cùng 1 tệp pure mask
+        print(f"✅ Mask (Pure) saved locally: {mask_path}")
 
         print(f"✅ Mask saved locally: {mask_path}")
 

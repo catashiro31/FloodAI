@@ -74,67 +74,130 @@
     </aside>
 
     <!-- ==================== ASSESSMENT VIEW ==================== -->
-    <div id="analysis-view" class="flex min-h-screen flex-col pt-20 md:pl-72">
-        <main class="mx-auto flex h-[calc(100vh-80px)] w-full max-w-5xl flex-col p-6 md:p-10">
-            <div class="mb-6 flex items-end justify-between border-b border-white/5 pb-6">
-                <div>
-                    <span class="rounded-full bg-brand-primary/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-brand-primary">Pipeline v2</span>
-                    <h1 class="mt-2 text-3xl font-extrabold tracking-tight text-ui-text">Flood Impact Assessment</h1>
+    <div id="analysis-view" class="flex min-h-screen flex-col pt-16 md:pl-72 bg-ui-bg">
+        <main class="flex h-[calc(100vh-64px)] w-full overflow-hidden">
+            <!-- Left Column: Chat History & Input -->
+            <div class="flex flex-1 flex-col border-r border-white/5 relative bg-ui-bg">
+                <div class="flex items-center justify-between border-b border-white/5 px-6 py-4 bg-ui-bg/50 backdrop-blur-sm z-10">
+                    <div class="flex items-center gap-3">
+                        <div class="h-8 w-8 rounded-lg bg-brand-primary/10 flex items-center justify-center">
+                            <i data-lucide="message-square" class="h-4 w-4 text-brand-primary"></i>
+                        </div>
+                        <h1 class="text-sm font-black uppercase tracking-widest text-ui-text">AI Assessment Chat</h1>
+                    </div>
+                    <span class="rounded-full bg-brand-primary/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-brand-primary">Active Analysis</span>
                 </div>
-            </div>
 
-            <!-- Metrics Panel (hidden until segmentation completes) -->
-            <div id="metrics-panel" class="hidden mb-6 animate-slide-up">
-                <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
-                    <div class="glass-card rounded-2xl p-5 text-center">
-                        <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted mb-2">Status</p>
-                        <div id="metric-status" class="text-lg font-black">—</div>
-                    </div>
-                    <div class="glass-card rounded-2xl p-5 text-center">
-                        <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted mb-2">Road Flood</p>
-                        <div id="metric-road" class="text-lg font-black text-brand-primary">—</div>
-                        <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                            <div id="metric-road-bar" class="h-full bg-brand-primary transition-all duration-1000" style="width: 0%"></div>
+                <!-- Chat History -->
+                <div id="analysis-chat-history" class="flex-1 space-y-8 overflow-y-auto px-6 py-8 custom-scrollbar scroll-smooth">
+                </div>
+
+                <!-- Input Area -->
+                <div class="border-t border-white/5 p-6 bg-ui-bg/50 backdrop-blur-md">
+                    <div class="relative flex flex-col gap-3">
+                        <div id="analysis-previews" class="flex flex-wrap gap-3 empty:hidden"></div>
+                        <div class="group relative flex items-center gap-2 rounded-2xl bg-white/5 p-1.5 transition-all focus-within:bg-white/10 border border-white/5 focus-within:border-brand-primary/30 shadow-2xl">
+                            <button id="analysis-upload-trigger" class="flex h-11 w-11 items-center justify-center rounded-xl text-ui-muted transition-all hover:bg-white/10 hover:text-brand-primary" title="Tải ảnh lên">
+                                <i data-lucide="camera" class="h-5 w-5"></i>
+                            </button>
+                            <input id="analysis-file-input" class="hidden" accept="image/*" type="file" />
+                            <input id="analysis-chat-input" class="flex-1 bg-transparent px-3 py-2 text-sm font-medium outline-none placeholder:text-ui-muted/40" placeholder="Chọn ảnh rồi nhấn gửi..." type="text" />
+                            <button id="analysis-send-btn" class="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-primary text-white transition-all hover:scale-105 active:scale-95">
+                                <i data-lucide="send" class="h-5 w-5"></i>
+                            </button>
                         </div>
-                    </div>
-                    <div class="glass-card rounded-2xl p-5 text-center">
-                        <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted mb-2">Buildings Flooded</p>
-                        <div class="flex items-baseline justify-center gap-1">
-                            <span id="metric-bld-flood" class="text-2xl font-black text-red-400">—</span>
-                            <span class="text-sm text-ui-muted/50">/</span>
-                            <span id="metric-bld-total" class="text-sm font-bold text-ui-muted">—</span>
-                        </div>
-                    </div>
-                    <div class="glass-card rounded-2xl p-5 text-center">
-                        <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted mb-2">Vehicles at Risk</p>
-                        <div id="metric-vehicle" class="text-2xl font-black text-orange-400">—</div>
-                    </div>
-                    <div class="glass-card rounded-2xl p-5 text-center">
-                        <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted mb-2">Flood Coverage</p>
-                        <div id="metric-coverage" class="text-lg font-black text-brand-primary">—</div>
+                        <p class="text-[9px] font-bold text-ui-muted/30 uppercase tracking-[0.2em] text-center">Neural Pipeline v2.4 • Precise Segmentation Enabled</p>
                     </div>
                 </div>
             </div>
 
-            <!-- Chat History -->
-            <div id="analysis-chat-history" class="flex-1 space-y-8 overflow-y-auto pr-4 custom-scrollbar scroll-smooth pb-10">
-            </div>
-
-            <!-- Input Area -->
-            <div class="mt-auto pt-4">
-                <div class="relative flex flex-col gap-3">
-                    <div id="analysis-previews" class="flex flex-wrap gap-3 empty:hidden"></div>
-                    <div class="group relative flex items-center gap-2 rounded-2xl bg-white/5 p-2 transition-all focus-within:bg-white/10 border border-white/5 focus-within:border-brand-primary/30 shadow-2xl">
-                        <button id="analysis-upload-trigger" class="flex h-12 w-12 items-center justify-center rounded-xl text-ui-muted transition-all hover:bg-white/10 hover:text-brand-primary" title="Tải ảnh lên (1 ảnh mỗi phiên)">
-                            <i data-lucide="camera" class="h-5 w-5"></i>
-                        </button>
-                        <input id="analysis-file-input" class="hidden" accept="image/*" type="file" />
-                        <input id="analysis-chat-input" class="flex-1 bg-transparent px-4 py-3 text-sm font-medium outline-none placeholder:text-ui-muted/40" placeholder="Chọn ảnh rồi nhấn gửi để bắt đầu phân tích..." type="text" />
-                        <button id="analysis-send-btn" class="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-primary text-white shadow-lg shadow-brand-primary/20 transition-all hover:scale-105 active:scale-95">
-                            <i data-lucide="send" class="h-5 w-5"></i>
-                        </button>
+            <!-- Right Column: Image Preview & Metrics -->
+            <div class="hidden w-96 flex-col border-l border-white/5 lg:flex bg-ui-bg/30">
+                <!-- Session Image Preview (Top) -->
+                <div class="flex h-64 flex-col border-b border-white/5 p-6">
+                    <div class="mb-4 flex items-center justify-between">
+                        <h3 class="text-[10px] font-black uppercase tracking-[0.2em] text-ui-muted">Current Session Image</h3>
+                        <i data-lucide="image" class="h-3 w-3 text-brand-primary"></i>
                     </div>
-                    <p class="px-4 text-[10px] font-bold text-ui-muted/40 uppercase tracking-[0.2em] text-center">Mỗi phiên 1 ảnh • Chat mở khóa sau khi phân đoạn xong</p>
+                    <div id="session-image-container" class="flex flex-1 items-center justify-center overflow-hidden rounded-2xl border border-white/5 bg-black/20 group cursor-pointer relative">
+                        <div id="session-image-placeholder" class="flex flex-col items-center gap-2 text-ui-muted/20 transition-all group-hover:text-brand-primary/40">
+                            <i data-lucide="image" class="h-10 w-10"></i>
+                            <span class="text-[9px] font-bold uppercase tracking-widest">No Image Loaded</span>
+                        </div>
+                        <img id="current-session-image" class="hidden h-full w-full object-cover transition-transform duration-500 group-hover:scale-110" src="" alt="Session Image" />
+                        <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 transition-opacity group-hover:opacity-100 flex items-end p-4">
+                            <span class="text-[9px] font-black text-white uppercase tracking-widest">View Full Resolution</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Metrics Panel (Bottom) -->
+                <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                    <div class="mb-6 flex items-center justify-between">
+                        <h3 class="text-[10px] font-black uppercase tracking-[0.2em] text-ui-muted">Assessment Metrics</h3>
+                        <div id="metric-status-badge" class="hidden h-2 w-2 rounded-full bg-emerald-500"></div>
+                    </div>
+                    
+                    <div id="metrics-panel" class="hidden space-y-4 animate-slide-up">
+                        <div class="metrics-stack flex flex-col gap-4">
+                            <div class="glass-card rounded-2xl p-4 border-l-4 border-l-brand-primary">
+                                <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted/60 mb-2">Analysis Result</p>
+                                <div id="metric-status" class="font-black">—</div>
+                            </div>
+                            
+                            <div class="glass-card rounded-2xl p-4">
+                                <div class="flex items-center justify-between mb-3">
+                                    <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted/60">Road Flood Intensity</p>
+                                    <span id="metric-road" class="text-xs font-black text-brand-primary">—</span>
+                                </div>
+                                <div class="h-2 w-full overflow-hidden rounded-full bg-white/5 p-[1px]">
+                                    <div id="metric-road-bar" class="h-full bg-gradient-to-r from-brand-primary/40 to-brand-primary rounded-full transition-all duration-1000" style="width: 0%"></div>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="glass-card rounded-2xl p-4">
+                                    <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted/60 mb-1">Buildings</p>
+                                    <div class="flex items-baseline gap-1">
+                                        <span id="metric-bld-flood" class="text-xl font-black text-red-400">—</span>
+                                        <span id="metric-bld-total" class="text-[10px] font-bold text-ui-muted/40 uppercase">/ —</span>
+                                    </div>
+                                </div>
+                                <div class="glass-card rounded-2xl p-4">
+                                    <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted/60 mb-1">Vehicles</p>
+                                    <span id="metric-vehicle" class="text-xl font-black text-orange-400">—</span>
+                                </div>
+                            </div>
+
+                            <div class="glass-card rounded-2xl p-4 bg-gradient-to-br from-brand-primary/5 to-transparent">
+                                <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted/60 mb-2">Estimated Flood Coverage</p>
+                                <div class="flex items-center justify-between">
+                                    <div id="metric-coverage" class="text-2xl font-black text-ui-text">—</div>
+                                    <div class="h-10 w-10 rounded-xl bg-brand-primary/10 flex items-center justify-center">
+                                        <i data-lucide="droplets" class="h-5 w-5 text-brand-primary"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Technical Legend -->
+                        <div class="mt-8 border-t border-white/5 pt-6">
+                            <h4 class="text-[10px] font-black uppercase tracking-widest text-ui-muted/40 mb-3">Detection Confidence</h4>
+                            <div class="flex flex-wrap gap-2">
+                                <span class="px-2 py-1 rounded-md bg-white/5 text-[8px] font-bold text-ui-muted uppercase tracking-tighter">Road: 94%</span>
+                                <span class="px-2 py-1 rounded-md bg-white/5 text-[8px] font-bold text-ui-muted uppercase tracking-tighter">Bld: 89%</span>
+                                <span class="px-2 py-1 rounded-md bg-white/5 text-[8px] font-bold text-ui-muted uppercase tracking-tighter">Veh: 82%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Empty State for Metrics -->
+                    <div id="metrics-empty-state" class="flex flex-col items-center justify-center h-full py-20 text-center">
+                        <div class="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center mb-4 text-ui-muted/20">
+                            <i data-lucide="bar-chart-2" class="h-8 w-8"></i>
+                        </div>
+                        <p class="text-[10px] font-bold uppercase tracking-widest text-ui-muted/30">Analysis pending</p>
+                    </div>
                 </div>
             </div>
         </main>

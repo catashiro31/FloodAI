@@ -221,22 +221,18 @@ class ComprehensiveVisualizer:
             9: [124, 252, 0]        # Grass
         }
   
-        overlay_img = cv2.cvtColor(orig_img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-        pure_mask_img = np.zeros_like(overlay_img) # Nền đen cho pure mask
-        alpha = 0.7
+        pure_mask_img = np.zeros((h_orig, w_orig, 3), dtype=np.float32)
         
-        # Vectorized Overlay Generation
+        # Vectorized Mask Generation
         for c_idx in segmentation_class:
             if c_idx not in class_colors: continue
             
-            mask = (prob_map_orig[c_idx] > 0.8)
+            mask = (prob_map_orig[c_idx] > 0.5)
             color = np.array(class_colors[c_idx], dtype=np.float32) / 255.0
-            
             pure_mask_img[mask] = color
-            overlay_img[mask] = overlay_img[mask] * (1 - alpha) + color * alpha
 
         result["mask_pure"] = ndarray_to_base64(pure_mask_img, image_format=".png")
-        result["mask_all_overlay"] = ndarray_to_base64(overlay_img, image_format=".png")
+        result["mask_all_overlay"] = result["mask_pure"] # Gửi cùng một cái để frontend xử lý tùy biến
 
         # Tính metrics
         metrics = compute_metrics(prob_map_orig, self.config, h_orig, w_orig)

@@ -83,12 +83,12 @@ socket.on('uploadStatus', (data) => {
             currentMetrics = data.details.metrics;
             renderMetricsPanel(currentMetrics);
         }
+        if (data.details?.imageUrl) {
+            updateSessionImage(data.details.imageUrl);
+        }
         if (data.details?.maskAllOverlay && lastBotMsg) {
-            // Thay mask overlay thành mask pure (full mask) cho giao diện chat
-            const pureMaskUrl = data.details.maskPure 
-                ? resolveImageUrl(data.details.maskPure) 
-                : resolveImageUrl(data.details.maskAllOverlay).replace('_mask_all_overlay', '_mask_pure');
-            lastBotMsg.imageUrls = [pureMaskUrl];
+            // Hiển thị trực tiếp Pure Mask (Full Mask) trong giao diện chat
+            lastBotMsg.imageUrls = [resolveImageUrl(data.details.maskAllOverlay)];
         }
         if (lastBotMsg) lastBotMsg.text = '✅ Phân đoạn hoàn tất! Mask dự đoán đầy đủ tất cả class đang được hiển thị.';
         unlockChat();
@@ -161,17 +161,45 @@ socket.on('receiveMessage', (data) => {
         renderGalleryForSession(sessionId);
     }
 });
+// ====================== RIGHT PANEL CONTROL ======================
+
+function updateSessionImage(url) {
+    const imgEl = document.getElementById('current-session-image');
+    const placeholderEl = document.getElementById('session-image-placeholder');
+    
+    if (imgEl && url) {
+        imgEl.src = resolveImageUrl(url);
+        imgEl.classList.remove('hidden');
+        if (placeholderEl) placeholderEl.classList.add('hidden');
+    } else if (imgEl) {
+        imgEl.classList.add('hidden');
+        if (placeholderEl) placeholderEl.classList.remove('hidden');
+    }
+}
+
 // ====================== METRICS PANEL ======================
 
 function renderMetricsPanel(metrics) {
-    if (!metricsPanelEl || !metrics) return;
+    if (!metricsPanelEl) return;
+    const emptyStateEl = document.getElementById('metrics-empty-state');
+    const statusBadgeEl = document.getElementById('metric-status-badge');
+
+    if (!metrics) {
+        metricsPanelEl.classList.add('hidden');
+        if (emptyStateEl) emptyStateEl.classList.remove('hidden');
+        if (statusBadgeEl) statusBadgeEl.classList.add('hidden');
+        return;
+    }
+
     metricsPanelEl.classList.remove('hidden');
+    if (emptyStateEl) emptyStateEl.classList.add('hidden');
+    if (statusBadgeEl) statusBadgeEl.classList.remove('hidden');
 
     const statusEl = document.getElementById('metric-status');
     if (statusEl) {
         statusEl.innerHTML = metrics.is_flooded
-            ? '<span class="inline-flex items-center gap-1.5 rounded-full bg-red-500/20 px-3 py-1 text-xs font-black text-red-400 uppercase tracking-widest"><i data-lucide="alert-triangle" class="h-3 w-3"></i> Ngập</span>'
-            : '<span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1 text-xs font-black text-emerald-400 uppercase tracking-widest"><i data-lucide="shield-check" class="h-3 w-3"></i> An toàn</span>';
+            ? '<span class="inline-flex items-center gap-1.5 rounded-full bg-red-500/20 px-3 py-1 text-[10px] font-black text-red-400 uppercase tracking-widest"><i data-lucide="alert-triangle" class="h-3 w-3"></i> Khu vực Ngập</span>'
+            : '<span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1 text-[10px] font-black text-emerald-400 uppercase tracking-widest"><i data-lucide="shield-check" class="h-3 w-3"></i> An toàn</span>';
     }
 
     const roadEl = document.getElementById('metric-road');
@@ -184,7 +212,7 @@ function renderMetricsPanel(metrics) {
     const bldFloodEl = document.getElementById('metric-bld-flood');
     const bldTotalEl = document.getElementById('metric-bld-total');
     if (bldFloodEl) bldFloodEl.textContent = metrics.building_flooded_count;
-    if (bldTotalEl) bldTotalEl.textContent = metrics.building_total_count;
+    if (bldTotalEl) bldTotalEl.textContent = `/ ${metrics.building_total_count}`;
 
     const vehicleEl = document.getElementById('metric-vehicle');
     if (vehicleEl) vehicleEl.textContent = metrics.vehicle_on_flooded_road;
@@ -319,7 +347,7 @@ async function loadSessionHistory(id) {
             renderAnalysisMessages(true);
         }
 
-        // Load tasks for this session to get metrics
+        // Load tasks for this session to get metrics & session image
         const taskRes = await fetch(`${BACKEND_URL}/chat/tasks/${id}`);
         if (taskRes.ok) {
             const taskData = await taskRes.json();
@@ -330,19 +358,21 @@ async function loadSessionHistory(id) {
                 localStorage.setItem('current_job_id', currentJobId);
 
                 sessionHasImage = true;
+                updateSessionImage(latestTask.image_url || latestTask.imageUrl);
 
                 if (latestTask.metrics) {
                     currentMetrics = latestTask.metrics;
                     renderMetricsPanel(currentMetrics);
+                } else {
+                    renderMetricsPanel(null);
                 }
-
-                // Không cần "patching" mask thủ công ở đây nữa vì đã được lưu trong history bền vững.
-                // Điều này giúp hiển thị đúng TẤT CẢ các ảnh/mask trong lịch sử kể cả khi có nhiều lần analyze.
 
                 unlockChat();
                 updateUploadButton();
             } else {
                 sessionHasImage = false;
+                updateSessionImage(null);
+                renderMetricsPanel(null);
                 unlockChat();
                 updateUploadButton();
             }
@@ -449,8 +479,8 @@ async function renderGalleryForSession(sid) {
                             <!-- Base layer (Original Image) -->
                             <img class="comparison-img-bottom absolute inset-0 w-full h-full object-cover" src="${resolveImageUrl(task.image_url || task.imageUrl)}" alt="Original" />
                             
-                            <!-- Overlay layer (Mask with 70% alpha) -->
-                            <img class="comparison-img-top absolute inset-0 w-full h-full object-cover" src="${resolveImageUrl(task.mask_all_overlay || task.maskAllOverlay)}" alt="Mask overlay" style="clip-path: inset(0 50% 0 0)" />
+                            <!-- Overlay layer (Mask - Always Pure now, overlaid with 70% opacity by CSS) -->
+                            <img class="comparison-img-top absolute inset-0 w-full h-full object-cover" src="${resolveImageUrl(task.mask_all_overlay || task.maskAllOverlay)}" alt="Mask overlay" style="clip-path: inset(0 50% 0 0); opacity: 0.7;" />
                             <div class="comparison-handle absolute top-0 bottom-0 flex items-center justify-center cursor-ew-resize z-10" style="left: 50%; transform: translateX(-50%)">
                                 <div class="w-1 h-full bg-white/80 shadow-xl"></div>
                                 <div class="absolute w-10 h-10 rounded-full bg-white/20 backdrop-blur-md border-2 border-white/60 flex items-center justify-center shadow-2xl">
@@ -578,7 +608,10 @@ function createNewSession() {
     sessionHasImage = false;
     currentMetrics = null;
     isProcessing = false;
+    
     if (metricsPanelEl) metricsPanelEl.classList.add('hidden');
+    updateSessionImage(null);
+    renderMetricsPanel(null);
 
     analysisMessages = [{
         id: "1", sender: "bot",
