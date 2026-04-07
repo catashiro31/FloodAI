@@ -3,6 +3,7 @@
 ## Giới thiệu
 FloodAI là hệ thống phân tích ảnh UAV để nhận diện vùng ngập, trích xuất mặt nạ (segmentation) và sinh báo cáo tình huống bằng mô hình VLM. Kiến trúc gồm một gateway (NestJS), hai worker AI (segmentation + reasoning), và giao diện web chat.
 
+
 ## Mục lục
 - [Cấu trúc dự án](#cau-truc-du-an)
 - [Luồng xử lý](#luong-xu-ly)
