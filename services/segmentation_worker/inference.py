@@ -148,45 +148,50 @@ class ComprehensiveVisualizer:
         if y_coords[-1] + local_size < h_padded: y_coords.append(h_padded - local_size)
         if x_coords[-1] + local_size < w_padded: x_coords.append(w_padded - local_size)
 
-        total_tiles = len(y_coords) * len(x_coords)
+        all_coords = []
+        for y in y_coords:
+            for x in x_coords:
+                y1 = max(0, min(y, h_padded - local_size))
+                x1 = max(0, min(x, w_padded - local_size))
+                y2 = min(h_padded, y1 + local_size)
+                x2 = min(w_padded, x1 + local_size)
+                all_coords.append((y1, x1, y2, x2))
+
+        total_tiles = len(all_coords)
         tiles_done = 0
-        use_autocast = self.device != 'cpu'
+        batch_size = 4 if self.device == 'cpu' else 1
+        scale_h, scale_w = self.config.GLOBAL_SIZE / h_padded, self.config.GLOBAL_SIZE / w_padded
 
-        with torch.no_grad():
-            for y in y_coords:
-                for x in x_coords:
-                    y1 = max(0, min(y, h_padded - local_size))
-                    x1 = max(0, min(x, w_padded - local_size))
-                    y2 = min(h_padded, y1 + local_size)
-                    x2 = min(w_padded, x1 + local_size)
-                    
+        with torch.inference_mode():
+            for i in range(0, total_tiles, batch_size):
+                batch_coords = all_coords[i:i + batch_size]
+                actual_batch_size = len(batch_coords)
+                
+                l_batch_list = []
+                bbox_batch_list = []
+                
+                for y1, x1, y2, x2 in batch_coords:
                     l_img_crop = full_img_rgb[y1:y2, x1:x2]
-                    l_tensor = self.transform(image=l_img_crop)['image'].unsqueeze(0).to(self.device)
-                    
-                    scale_h, scale_w = self.config.GLOBAL_SIZE / h_padded, self.config.GLOBAL_SIZE / w_padded
-                    bbox_tensor = torch.tensor([
-                        [x1 * scale_w, y1 * scale_h, x2 * scale_w, y2 * scale_h]
-                    ], dtype=torch.float32).to(self.device)
+                    l_batch_list.append(self.transform(image=l_img_crop)['image'])
+                    bbox_batch_list.append(torch.tensor([x1 * scale_w, y1 * scale_h, x2 * scale_w, y2 * scale_h], dtype=torch.float32))
+                
+                l_batch = torch.stack(l_batch_list).to(self.device)
+                bbox_batch = torch.stack(bbox_batch_list).to(self.device)
+                g_batch = g_tensor.expand(actual_batch_size, -1, -1, -1)
 
-                    if use_autocast:
-                        with torch.amp.autocast('cuda', enabled=True):
-                            outputs = self.model(g_tensor, l_tensor, bbox_tensor)
-                            logits = outputs['main'] 
-                            probs = F.softmax(logits, dim=1).squeeze(0)
-                    else:
-                        outputs = self.model(g_tensor, l_tensor, bbox_tensor)
-                        logits = outputs['main'] 
-                        probs = F.softmax(logits, dim=1).squeeze(0)
+                outputs = self.model(g_batch, l_batch, bbox_batch)
+                probs_batch = F.softmax(outputs['main'], dim=1) # (N, C, H, W)
 
-                    prob_map[:, y1:y2, x1:x2] += probs
+                for j, (y1, x1, y2, x2) in enumerate(batch_coords):
+                    prob_map[:, y1:y2, x1:x2] += probs_batch[j]
                     count_map[:, y1:y2, x1:x2] += 1.0
-
                     tiles_done += 1
-                    if progress_callback:
-                        percent = int((tiles_done / total_tiles) * 100)
-                        elapsed = time.time() - start
-                        est_remaining = int((elapsed / tiles_done) * (total_tiles - tiles_done)) if tiles_done > 0 else 0
-                        progress_callback(percent, est_remaining)
+                
+                if progress_callback:
+                    percent = int((tiles_done / total_tiles) * 100)
+                    elapsed = time.time() - start
+                    est_remaining = int((elapsed / tiles_done) * (total_tiles - tiles_done)) if tiles_done > 0 else 0
+                    progress_callback(percent, est_remaining)
 
         prob_map /= count_map
         
@@ -204,7 +209,6 @@ class ComprehensiveVisualizer:
             return base64.b64encode(encoded_img.tobytes()).decode("utf-8")
 
         result = {}
-        focus_classes = segmentation_class 
         class_colors = {
           1: [255, 0, 0],      # đỏ - Building Flooded
           5: [0, 255, 0],      # xanh lá - Water
@@ -212,22 +216,21 @@ class ComprehensiveVisualizer:
           2: [255, 255, 0],    # vàng - Building Non-Flooded
         }
   
-        # All-class overlay
-        all_overlay_img = cv2.cvtColor(orig_img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-
+        overlay_img = cv2.cvtColor(orig_img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
         alpha = 0.8
-        for c_idx in focus_classes:
-            p_map = prob_map_orig[c_idx]
-            binary_map = (p_map > 0.8).astype(np.uint8)
+        
+        # Vectorized Overlay Generation
+        for c_idx in segmentation_class:
+            if c_idx not in class_colors: continue
             
-            color_rgb = np.array(class_colors.get(c_idx, [255,255,255]), dtype=np.uint8)
-            color_float = color_rgb.astype(np.float32) / 255.0
-            mask_bool = binary_map.astype(bool)
-            all_overlay_img[mask_bool] = (
-                (1 - alpha) * all_overlay_img[mask_bool] + alpha * color_float
-            )
+            mask = (prob_map_orig[c_idx] > 0.8)
+            color = np.array(class_colors[c_idx], dtype=np.float32) / 255.0
+            
+            # overlay_img[mask] = (1 - alpha) * overlay_img[mask] + alpha * color
+            # Optimize: apply alpha blending only to pixels where mask is true
+            overlay_img[mask] = overlay_img[mask] * (1 - alpha) + color * alpha
 
-        result["mask_all_overlay"] = ndarray_to_base64(all_overlay_img, image_format=".png")
+        result["mask_all_overlay"] = ndarray_to_base64(overlay_img, image_format=".png")
 
         # Tính metrics
         metrics = compute_metrics(prob_map_orig, self.config, h_orig, w_orig)

@@ -49,7 +49,7 @@ def run_segmentation_task(
             # Gửi tiến độ cho Gateway
             requests.post(progress_url, json={
                 "job_id": job_id,
-                "status": "processing(segmentation)",
+                "status": "processing_segmentation",
                 "progress": percent,
                 "est_seconds_remaining": est_remaining
             }, timeout=2)
@@ -58,10 +58,10 @@ def run_segmentation_task(
 
     try:
         job_status[job_id] = {
-            "status": "processing(segmentation)",
+            "status": "processing_segmentation",
             "start_time": time.time(),
         }  
-        update_data("status", "processing(segmentation)", TABLE_NAME, "job_id", job_id)
+        update_data("status", "processing_segmentation", TABLE_NAME, "job_id", job_id)
 
         data = get_data(job_id)
         if not data:
@@ -99,26 +99,44 @@ def run_segmentation_task(
             )
             return None
 
-        response = requests.get(image_source, timeout=30)
-        if response.status_code != 200:
-            error_message = "Failed to download image"
-            job_status[job_id].update({"status": "error", "error": error_message})
-            update_data("status", "error", TABLE_NAME, "job_id", job_id)
-            update_data("error_code", "SEGMENTATION_IMAGE_DOWNLOAD_FAILED", TABLE_NAME, "job_id", job_id)
-            update_data("error_message", error_message, TABLE_NAME, "job_id", job_id)
-            send_segmentation_callback(
-                callback_url,
-                {
-                    "job_id": job_id,
-                    "status": "error",
-                    "error_code": "SEGMENTATION_IMAGE_DOWNLOAD_FAILED",
-                    "error_message": error_message,
-                },
-            )
-            return None
+        # Tải ảnh: Nếu là đường dẫn cục bộ /static/... thì đọc trực tiếp từ disk
+        image_content = None
+        if image_source.startswith("/static/"):
+            # Tìm đường dẫn tuyệt đối tới thư mục uploads của gateway
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            file_rel_path = image_source.replace("/static/", "").replace("/", os.sep)
+            abs_path = os.path.join(base_dir, "apps", "api-gateway", "uploads", file_rel_path)
+            
+            if os.path.exists(abs_path):
+                with open(abs_path, "rb") as f:
+                    image_content = f.read()
+                print(f"✅ Loaded original image from local disk: {abs_path}")
+            else:
+                print(f"⚠️ Local file not found: {abs_path}, falling back to request (might fail)")
+        
+        if image_content is None:
+            # Fallback dùng requests (cho các ảnh online cũ hoặc nếu disk access thất bại)
+            response = requests.get(image_source, timeout=30)
+            if response.status_code != 200:
+                error_message = f"Failed to download image from {image_source}"
+                job_status[job_id].update({"status": "error", "error": error_message})
+                update_data("status", "error", TABLE_NAME, "job_id", job_id)
+                update_data("error_code", "SEGMENTATION_IMAGE_DOWNLOAD_FAILED", TABLE_NAME, "job_id", job_id)
+                update_data("error_message", error_message, TABLE_NAME, "job_id", job_id)
+                send_segmentation_callback(
+                    callback_url,
+                    {
+                        "job_id": job_id,
+                        "status": "error",
+                        "error_code": "SEGMENTATION_IMAGE_DOWNLOAD_FAILED",
+                        "error_message": error_message,
+                    },
+                )
+                return None
+            image_content = response.content
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-            tmp.write(response.content)
+            tmp.write(image_content)
             temp_path = tmp.name
         
         result = predictor.visualize_all(temp_path, important_class, progress_callback=on_progress)
@@ -141,28 +159,22 @@ def run_segmentation_task(
             )
             return None
 
-        image_name = get_filename_from_url(image_source)
-        image_name = f"{image_name}_mask_all_overlay.png"
-        mask_all_overlay_url = upload_image_to_bucket(image_name, overlay_content)
-        if not mask_all_overlay_url:
-            error_message = "Failed to upload mask_all_overlay to storage"
-            job_status[job_id].update({"status": "error", "error": error_message})
-            update_data("status", "error", TABLE_NAME, "job_id", job_id)
-            update_data("error_code", "SEGMENTATION_UPLOAD_FAILED", TABLE_NAME, "job_id", job_id)
-            update_data("error_message", error_message, TABLE_NAME, "job_id", job_id)
-            send_segmentation_callback(
-                callback_url,
-                {
-                    "job_id": job_id,
-                    "status": "error",
-                    "error_code": "SEGMENTATION_UPLOAD_FAILED",
-                    "error_message": error_message,
-                },
-            )
-            return None
+        # Lưu mask cục bộ thay vì upload Cloudinary
+        import base64 as b64mod
+        mask_filename = f"{job_id}_mask_all_overlay.png"
+        masks_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "apps", "api-gateway", "uploads", "masks")
+        os.makedirs(masks_dir, exist_ok=True)
+        mask_path = os.path.join(masks_dir, mask_filename)
+        
+        mask_bytes = b64mod.b64decode(overlay_content)
+        with open(mask_path, "wb") as f:
+            f.write(mask_bytes)
+        
+        mask_all_overlay_url = f"/static/masks/{mask_filename}"
+        print(f"✅ Mask saved locally: {mask_path}")
 
         update_data("mask_all_overlay", mask_all_overlay_url, TABLE_NAME, "job_id", job_id)
-        update_data("status", "success(segmentation)", TABLE_NAME, "job_id", job_id)
+        update_data("status", "success_segmentation", TABLE_NAME, "job_id", job_id)
         update_data("error_code", None, TABLE_NAME, "job_id", job_id)
         update_data("error_message", None, TABLE_NAME, "job_id", job_id)
 
@@ -171,7 +183,7 @@ def run_segmentation_task(
         update_data("metrics", json.dumps(metrics), TABLE_NAME, "job_id", job_id)
 
         job_status[job_id].update({
-            "status": "success(segmentation)",
+            "status": "success_segmentation",
             "mask_all_overlay": mask_all_overlay_url,
             "metrics": metrics,
             "end_time": time.time(),
@@ -181,7 +193,7 @@ def run_segmentation_task(
             callback_url,
             {
                 "job_id": job_id,
-                "status": "success(segmentation)",
+                "status": "success_segmentation",
                 "mask_all_overlay": mask_all_overlay_url,
                 "mask_url": mask_all_overlay_url,
                 "metrics": metrics,

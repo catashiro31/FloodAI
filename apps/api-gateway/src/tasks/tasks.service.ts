@@ -1,7 +1,7 @@
 import { ConflictException, Injectable, Logger } from "@nestjs/common";
 import * as crypto from "crypto";
 import { TaskStatus, canTransitionStatus } from "../common/task-status";
-import { CloudinaryService } from "../shared/storage/cloudinary.service";
+import { LocalStorageService } from "../shared/storage/local-storage.service";
 import { TasksRepository } from "./tasks.repository";
 import { Task } from "./entities/task.entity";
 
@@ -17,7 +17,7 @@ export class TasksService {
 
   constructor(
     private readonly repository: TasksRepository,
-    private readonly cloudinaryService: CloudinaryService,
+    private readonly storageService: LocalStorageService,
   ) {}
 
   async createTaskFromUpload(input: CreateTaskInput) {
@@ -29,15 +29,15 @@ export class TasksService {
     const fileExtension = this.resolveFileExtension(input.file.mimetype);
     const fileName = `${fileHash}.${fileExtension}`;
 
-    // Search for existing file on Cloudinary
-    const existingFiles = await this.cloudinaryService.findFile(fileName);
-    
+    // Kiểm tra file đã tồn tại chưa (dedup)
+    const existingFiles = await this.storageService.findFile(fileName);
+
     let imageUrl: string;
     if (existingFiles.length > 0) {
       imageUrl = existingFiles[0].secure_url;
     } else {
-      const uploadResult = await this.cloudinaryService.uploadFile(input.file.buffer, fileName);
-      imageUrl = uploadResult.secure_url;
+      const result = await this.storageService.saveFile(input.file.buffer, fileName);
+      imageUrl = result.secure_url;
     }
 
     const task: Partial<Task> = {
@@ -115,8 +115,6 @@ export class TasksService {
       return task;
     }
 
-    // Since canTransitionStatus might expect the old string status, we might need a cast if the types differ slightly
-    // but here we are using the TaskStatus enum which should be compatible.
     if (!canTransitionStatus(task.status as any, nextStatus as any)) {
       throw new ConflictException(
         `Invalid task transition ${task.status} -> ${nextStatus} for ${jobId}`,

@@ -1,6 +1,8 @@
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
+import { NestExpressApplication } from "@nestjs/platform-express";
 import { json, urlencoded } from "express";
+import * as path from "path";
 import { AppModule } from "./app.module";
 
 function resolveCorsOrigins(): true | string[] {
@@ -19,10 +21,10 @@ function resolveCorsOrigins(): true | string[] {
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
-  app.use(json({ limit: "10mb" }));
-  app.use(urlencoded({ extended: true, limit: "10mb" }));
+  app.use(json({ limit: "50mb" }));
+  app.use(urlencoded({ extended: true, limit: "50mb" }));
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -30,6 +32,10 @@ async function bootstrap() {
       forbidNonWhitelisted: false,
     }),
   );
+
+  // Phục vụ ảnh cục bộ từ thư mục uploads/
+  const uploadsDir = path.resolve(process.cwd(), "uploads");
+  app.useStaticAssets(uploadsDir, { prefix: "/static" });
 
   app.enableCors({
     origin: resolveCorsOrigins(),
@@ -42,3 +48,4 @@ async function bootstrap() {
   console.log(`🚀 Backend gateway is running on http://localhost:${port}`);
 }
 void bootstrap();
+

@@ -7,6 +7,8 @@ import { SegmentationClient } from "./segmentation.client";
 import { VlmClient } from "./vlm.client";
 import { VlmService } from "../vlm/vlm.service";
 import axios from "axios";
+import * as fs from "fs";
+import * as path from "path";
 
 @Injectable()
 export class OrchestrationService {
@@ -19,7 +21,7 @@ export class OrchestrationService {
     private readonly segmentationClient: SegmentationClient,
     private readonly vlmClient: VlmClient,
     private readonly vlmService: VlmService,
-  ) {}
+  ) { }
 
   triggerSegmentation(task: TaskRecord, clientId?: string) {
     void this.enqueueSegmentation(task, clientId);
@@ -116,29 +118,58 @@ export class OrchestrationService {
     }
   }
 
+  private async getBufferFromUrl(url: string): Promise<Buffer> {
+    if (!url) throw new Error("URL is empty");
+
+    // Nếu là đường dẫn cục bộ /static/...
+    if (url.startsWith("/static/")) {
+      const fileName = url.replace(/^\/static\//, "");
+      const filePath = path.resolve(process.cwd(), "uploads", fileName);
+      if (fs.existsSync(filePath)) {
+        return fs.readFileSync(filePath);
+      }
+      throw new Error(`File not found at ${filePath}`);
+    }
+
+    // Nếu là URL đầy đủ (http/https)
+    const response = await axios.get(url, { responseType: 'arraybuffer' });
+    return Buffer.from(response.data, 'binary');
+  }
+
   private async runLocalVlm(task: TaskRecord, question: string, clientId?: string) {
     try {
-      const imageUrl = task.mask_all_overlay || task.image_url;
-      if (!imageUrl) throw new Error("No image found for VLM analysis");
+      // Tải ảnh gốc
+      if (!task.image_url) throw new Error("No original image found for VLM analysis");
+      const originalBuffer = await this.getBufferFromUrl(task.image_url);
+      const base64Original = originalBuffer.toString('base64');
 
-      // 1. Download và chuyển đổi sang Base64
-      const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-      const base64Image = Buffer.from(response.data, 'binary').toString('base64');
-
-      // 2. Định dạng ngữ cảnh đính kèm Metrics
-      let prompt = question;
-      if (task.metrics) {
-        prompt = `Ngữ cảnh nhận diện từ mô hình (tỷ lệ ngập dán nhãn): ${JSON.stringify(task.metrics)}\n\nCâu hỏi: ${question}\nHãy trả lời tự nhiên và ngắn gọn bằng tiếng Việt.`;
+      // Tải ảnh mask (nếu có)
+      let base64Mask: string | null = null;
+      if (task.mask_all_overlay) {
+        try {
+          const maskBuffer = await this.getBufferFromUrl(task.mask_all_overlay);
+          base64Mask = maskBuffer.toString('base64');
+        } catch (err) {
+          this.logger.warn(`Could not load mask image: ${err.message}`);
+        }
       }
 
-      // 3. Chạy Ollama
-      const reply = await this.vlmService.analyze(prompt, base64Image);
+      let reply: string;
+      if (base64Mask) {
+        // Dual-VLM Expert Analysis: PaliGemma + Gemma4
+        this.logger.log(`Running Dual-VLM Expert for ${task.job_id}`);
+        reply = await this.vlmService.analyzeExpert(
+          question,
+          base64Original,
+          base64Mask,
+          task.metrics || null,
+        );
+      } else {
+        // Fallback: chỉ dùng Gemma4 với ảnh gốc
+        this.logger.log(`Running Gemma4 fallback for ${task.job_id}`);
+        reply = await this.vlmService.analyze(question, base64Original, 'gemma4');
+      }
 
-      // 4. Callback giả lập (Giống cách worker gọi về)
-      const { ChatService } = require("../chat/chat.service"); // Late import to avoid circular dependency
-      // Tuy nhiên, Orchestration được inject vào ChatService, nên ta có thể gửi message qua realtime trực tiếp 
-      // hoặc gọi endpoint webhook qua axios. Để an toàn, ta dùng axios gọi chính mình.
-      
       await axios.post(this.buildCallbackUrl("/chat/webhook/vlm"), {
         job_id: task.job_id,
         session_id: task.session_id,
@@ -155,6 +186,7 @@ export class OrchestrationService {
       });
     }
   }
+
 
   private buildCallbackUrl(pathname: string) {
     const baseUrl =

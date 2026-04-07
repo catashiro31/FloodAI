@@ -6,12 +6,20 @@ const BACKEND_URL =
         ? `${window.location.protocol}//${window.location.hostname}:5000`
         : FALLBACK_BACKEND_URL);
 
+// Helper: chuyển đổi đường dẫn /static/... thành URL đầy đủ
+function resolveImageUrl(url) {
+    if (!url) return '';
+    if (typeof url !== 'string') return url;
+    if (url.startsWith('/static/')) return `${BACKEND_URL}${url}`;
+    return url;
+}
+
 // Initialize Socket.io
 let socket;
 if (typeof io !== 'undefined') {
     socket = io(BACKEND_URL);
 } else {
-    socket = { on: () => {}, emit: () => {}, id: 'mock-id' };
+    socket = { on: () => { }, emit: () => { }, id: 'mock-id' };
 }
 
 // State
@@ -30,13 +38,13 @@ if (!sessionId) {
 }
 
 let analysisMessages = [
-  {
-    id: "1",
-    sender: "bot",
-    text: "Chào mừng bạn đến FloodWiz! Hãy tải lên ảnh UAV/drone để bắt đầu phân tích ngập lụt. Mỗi phiên chỉ cho phép 1 ảnh.",
-    createdAt: Date.now(),
-    imageUrls: []
-  }
+    {
+        id: "1",
+        sender: "bot",
+        text: "Chào mừng bạn đến FloodWiz! Hãy tải lên ảnh UAV/drone để bắt đầu phân tích ngập lụt. Mỗi phiên chỉ cho phép 1 ảnh.",
+        createdAt: Date.now(),
+        imageUrls: []
+    }
 ];
 
 let selectedFiles = [];
@@ -76,7 +84,7 @@ socket.on('uploadStatus', (data) => {
             renderMetricsPanel(currentMetrics);
         }
         if (data.details?.maskAllOverlay && lastBotMsg) {
-            lastBotMsg.imageUrls = [data.details.maskAllOverlay];
+            lastBotMsg.imageUrls = [resolveImageUrl(data.details.maskAllOverlay)];
         }
         if (lastBotMsg) lastBotMsg.text = '✅ Phân đoạn hoàn tất! Ảnh mask đã được tạo.';
         unlockChat();
@@ -97,7 +105,7 @@ socket.on('uploadStatus', (data) => {
         if (data.status === 'Processing segmentation' && data.details?.progress !== undefined) {
             lastBotMsg.progress = data.details.progress;
             lastBotMsg.estSecondsRemaining = data.details.estSecondsRemaining;
-            
+
             // Cập nhật text để người dùng thấy rõ
             if (data.details.progress < 100) {
                 lastBotMsg.text = `⏳ Đang phân tích dữ liệu... ${data.details.progress}%`;
@@ -129,14 +137,14 @@ socket.on('receiveMessage', (data) => {
 
     if (thinkingIdx !== -1) {
         analysisMessages[thinkingIdx].text = data.reply;
-        analysisMessages[thinkingIdx].imageUrls = data.imageUrls || [];
+        analysisMessages[thinkingIdx].imageUrls = (data.imageUrls || []).map(resolveImageUrl);
     } else {
         analysisMessages.push({
             id: Date.now().toString(),
             sender: 'bot',
             text: data.reply,
             createdAt: data.createdAt ? new Date(data.createdAt).getTime() : Date.now(),
-            imageUrls: data.imageUrls || []
+            imageUrls: (data.imageUrls || []).map(resolveImageUrl)
         });
     }
 
@@ -149,7 +157,6 @@ socket.on('receiveMessage', (data) => {
         renderGalleryForSession(sessionId);
     }
 });
-
 // ====================== METRICS PANEL ======================
 
 function renderMetricsPanel(metrics) {
@@ -285,13 +292,19 @@ async function loadSessionHistory(id) {
             const data = await res.json();
             const dbSession = data.session;
             if (dbSession && dbSession.history && dbSession.history.length > 0) {
-                analysisMessages = dbSession.history.map((h, i) => ({
-                    id: i.toString(),
-                    sender: (h.role === 'user' || h.sender === 'user') ? 'user' : 'bot',
-                    text: h.content || h.text || '',
-                    createdAt: h.createdAt ? new Date(h.createdAt).getTime() : Date.now(),
-                    imageUrls: h.imageUrls || []
-                }));
+                analysisMessages = dbSession.history.map((h, i) => {
+                    let urls = h.imageUrls || [];
+                    // Đảm bảo resolve tất cả ảnh trong lịch sử
+                    urls = urls.map(resolveImageUrl);
+
+                    return {
+                        id: i.toString(),
+                        sender: (h.role === 'user' || h.sender === 'user') ? 'user' : 'bot',
+                        text: h.content || h.text || '',
+                        createdAt: h.createdAt ? new Date(h.createdAt).getTime() : Date.now(),
+                        imageUrls: urls
+                    };
+                });
             } else {
                 analysisMessages = [{
                     id: "1", sender: "bot",
@@ -308,24 +321,38 @@ async function loadSessionHistory(id) {
             const taskData = await taskRes.json();
             const tasks = taskData.tasks || [];
             if (tasks.length > 0) {
-                sessionHasImage = true;
                 const latestTask = tasks[0];
-                currentJobId = latestTask.jobId;
+                currentJobId = latestTask.job_id || latestTask.jobId;
                 localStorage.setItem('current_job_id', currentJobId);
+
+                // Quan trọng: Nếu chỉ load lại trang, ta vẫn để sessionHasImage = true 
+                // để cho phép chat, nhưng nút upload sẽ không bị khóa cứng nữa.
+                sessionHasImage = true;
 
                 if (latestTask.metrics) {
                     currentMetrics = latestTask.metrics;
                     renderMetricsPanel(currentMetrics);
+                    showExportButton();
                 }
 
-                if (['success_segmentation', 'success_vlm', 'processing_vlm'].includes(latestTask.status)) {
-                    unlockChat();
-                } else {
-                    lockChat();
+                // Cập nhật ảnh mask cho tin nhắn cuối nếu có
+                const maskUrl = latestTask.mask_all_overlay || latestTask.maskAllOverlay;
+                if (maskUrl) {
+                    const lastBotMsg = [...analysisMessages].reverse().find(m => m.sender === 'bot');
+                    if (lastBotMsg && lastBotMsg.imageUrls.length === 0) {
+                        lastBotMsg.imageUrls = [resolveImageUrl(maskUrl)];
+                        renderAnalysisMessages(true);
+                    }
                 }
+
+                // Luôn unlock chat khi load lại trang để tránh bị kẹt 
+                // (Server sẽ vẫn gửi update qua socket nếu đang chạy)
+                unlockChat();
                 updateUploadButton();
             } else {
+                sessionHasImage = false;
                 unlockChat();
+                updateUploadButton();
             }
         }
 
@@ -394,7 +421,8 @@ async function renderGalleryForSession(sid) {
         const res = await fetch(`${BACKEND_URL}/chat/tasks/${sid}`);
         if (!res.ok) throw new Error('Failed to fetch tasks');
         const data = await res.json();
-        const tasks = (data.tasks || []).filter(t => t.maskAllOverlay && t.imageUrl);
+        // Hỗ trợ cả snake_case và camelCase từ database
+        const tasks = (data.tasks || []).filter(t => (t.mask_all_overlay || t.maskAllOverlay) && (t.image_url || t.imageUrl));
 
         if (tasks.length === 0) {
             galleryContentEl.innerHTML = `
@@ -414,9 +442,9 @@ async function renderGalleryForSession(sid) {
                     <!-- Comparison Slider -->
                     <div class="comparison-slider" data-idx="${idx}">
                         <div class="comparison-container relative overflow-hidden" style="aspect-ratio: 16/10">
-                            <img class="comparison-img-bottom absolute inset-0 w-full h-full object-cover" src="${task.maskAllOverlay}" alt="Mask overlay" />
+                            <img class="comparison-img-bottom absolute inset-0 w-full h-full object-cover" src="${resolveImageUrl(task.mask_all_overlay || task.maskAllOverlay)}" alt="Mask overlay" />
                             <div class="comparison-img-top-wrapper absolute inset-0 overflow-hidden" style="width: 50%">
-                                <img class="comparison-img-top w-full h-full object-cover" src="${task.imageUrl}" alt="Original" style="width: calc(200%); max-width: none;" />
+                                <img class="comparison-img-top w-full h-full object-cover" src="${resolveImageUrl(task.image_url || task.imageUrl)}" alt="Original" style="width: calc(200%); max-width: none;" />
                             </div>
                             <div class="comparison-handle absolute top-0 bottom-0 flex items-center justify-center cursor-ew-resize z-10" style="left: 50%; transform: translateX(-50%)">
                                 <div class="w-1 h-full bg-white/80 shadow-xl"></div>
@@ -542,14 +570,15 @@ function createNewSession() {
 
 function updateUploadButton() {
     if (analysisUploadTriggerEl) {
-        if (sessionHasImage) {
+        // Thay đổi: Không khóa nút upload vĩnh viễn nữa. 
+        // Chỉ khóa khi đang trong quá trình xử lý (isProcessing)
+        if (isProcessing) {
             analysisUploadTriggerEl.disabled = true;
             analysisUploadTriggerEl.classList.add('opacity-30', 'cursor-not-allowed');
-            analysisUploadTriggerEl.title = 'Ảnh đã được tải lên cho phiên này';
         } else {
             analysisUploadTriggerEl.disabled = false;
             analysisUploadTriggerEl.classList.remove('opacity-30', 'cursor-not-allowed');
-            analysisUploadTriggerEl.title = 'Tải ảnh lên (1 ảnh mỗi phiên)';
+            analysisUploadTriggerEl.title = sessionHasImage ? 'Tải ảnh mới để phân tích lại' : 'Tải ảnh lên để bắt đầu';
         }
     }
 }

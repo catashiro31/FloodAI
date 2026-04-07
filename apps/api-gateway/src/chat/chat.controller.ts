@@ -6,10 +6,12 @@ import {
   Param,
   Post,
   Query,
+  Res,
   UploadedFile,
   UseInterceptors,
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
+import { Response } from "express";
 import { ChatService } from "./chat.service";
 import { CreateChatDto } from "./dto/create-chat.dto";
 import { SegmentationCallbackDto } from "./dto/segmentation-callback.dto";
@@ -18,7 +20,9 @@ import { VlmCallbackDto } from "./dto/vlm-callback.dto";
 
 @Controller("chat")
 export class ChatController {
-  constructor(private readonly chatService: ChatService) {}
+  constructor(
+    private readonly chatService: ChatService,
+  ) {}
 
   @Post()
   async sendMessage(@Body() createChatDto: CreateChatDto) {

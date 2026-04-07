@@ -1,4 +1,5 @@
 import os
+import torch
 from contextlib import asynccontextmanager
 from uuid import UUID
 
@@ -12,9 +13,12 @@ from db_handler import TABLE_NAME, get_data, update_data
 from model_handler import job_status, load_model, run_segmentation_task
 
 load_dotenv()
+torch.set_num_threads(os.cpu_count() or 4)
 
 port = int(os.getenv("PORT", "8080"))
 
+
+predictor = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -45,7 +49,7 @@ async def get_inference(request: InferenceRequest, background_tasks: BackgroundT
     job_id = str(request.job_id)
 
     current_state = job_status.get(job_id, {}).get("status")
-    if current_state in {"queued", "processing(segmentation)"}:
+    if current_state in {"queued", "processing_segmentation"}:
         return {"job_id": job_id, "status": "already_running"}
 
     data = get_data(job_id)
