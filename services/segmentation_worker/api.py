@@ -29,6 +29,7 @@ app = FastAPI(title="FloodNet Segmentation API", lifespan=lifespan)
 class InferenceRequest(BaseModel):
     job_id: UUID
     callback_url: str
+    progress_url: str = ""
 
 
 @app.get("/health")
@@ -62,6 +63,7 @@ async def get_inference(request: InferenceRequest, background_tasks: BackgroundT
         predictor,
         job_id,
         request.callback_url,
+        request.progress_url,
     )
     job_status[job_id] = {"status": "queued"}
     return {"job_id": job_id, "status": "queued"}

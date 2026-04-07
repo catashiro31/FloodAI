@@ -16,7 +16,6 @@ export class ConversationService {
 
   async ensureSession(
     sessionId: string,
-    jobId: string,
     initialQuestion?: string,
   ) {
     const existing = await this.repository.getSession(sessionId);

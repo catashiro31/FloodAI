@@ -7,9 +7,9 @@ import requests
 
 from inference import Config, ComprehensiveVisualizer
 from file_handler import get_filename_from_url
-from db_handler import TABLE_NAME, BUCKET_NAME, get_data, update_data, upload_image_to_bucket
+from db_handler import TABLE_NAME, get_data, update_data, upload_image_to_bucket
 
-MODEL_WEIGHT = "./best_heavy_hybrid_glnet.pth"
+MODEL_WEIGHT = r"f:\Nghiên cứu khoa học\Segmentation\FloodAI\model\best_ssl_model.pth"
 important_class = [1, 3]
 
 job_status: Dict[str, dict] = {}
@@ -38,8 +38,23 @@ def run_segmentation_task(
     predictor: ComprehensiveVisualizer,
     job_id: str,
     callback_url: str = "",
+    progress_url: str = "",
 ):
     temp_path = None
+
+    def on_progress(percent, est_remaining):
+        if not progress_url:
+            return
+        try:
+            # Gửi tiến độ cho Gateway
+            requests.post(progress_url, json={
+                "job_id": job_id,
+                "status": "processing(segmentation)",
+                "progress": percent,
+                "est_seconds_remaining": est_remaining
+            }, timeout=2)
+        except:
+            pass
 
     try:
         job_status[job_id] = {
@@ -106,8 +121,9 @@ def run_segmentation_task(
             tmp.write(response.content)
             temp_path = tmp.name
         
-        result = predictor.visualize_all(temp_path, important_class)
+        result = predictor.visualize_all(temp_path, important_class, progress_callback=on_progress)
         overlay_content = result.get("mask_all_overlay")
+        metrics = result.get("metrics", {})
         if not overlay_content:
             error_message = "Segmentation output missing mask_all_overlay"
             job_status[job_id].update({"status": "error", "error": error_message})
@@ -127,7 +143,7 @@ def run_segmentation_task(
 
         image_name = get_filename_from_url(image_source)
         image_name = f"{image_name}_mask_all_overlay.png"
-        mask_all_overlay_url = upload_image_to_bucket(image_name, overlay_content, BUCKET_NAME)
+        mask_all_overlay_url = upload_image_to_bucket(image_name, overlay_content)
         if not mask_all_overlay_url:
             error_message = "Failed to upload mask_all_overlay to storage"
             job_status[job_id].update({"status": "error", "error": error_message})
@@ -150,9 +166,14 @@ def run_segmentation_task(
         update_data("error_code", None, TABLE_NAME, "job_id", job_id)
         update_data("error_message", None, TABLE_NAME, "job_id", job_id)
 
+        # Lưu metrics dạng JSON vào DB
+        import json
+        update_data("metrics", json.dumps(metrics), TABLE_NAME, "job_id", job_id)
+
         job_status[job_id].update({
             "status": "success(segmentation)",
             "mask_all_overlay": mask_all_overlay_url,
+            "metrics": metrics,
             "end_time": time.time(),
             "duration": time.time() - job_status[job_id]["start_time"]
         })
@@ -163,6 +184,7 @@ def run_segmentation_task(
                 "status": "success(segmentation)",
                 "mask_all_overlay": mask_all_overlay_url,
                 "mask_url": mask_all_overlay_url,
+                "metrics": metrics,
             },
         )
 

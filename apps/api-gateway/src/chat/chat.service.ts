@@ -46,17 +46,18 @@ export class ChatService {
 
     const effectiveSessionId =
       sessionId || body.sessionId || crypto.randomUUID();
+
+    // Để tránh lỗi khóa ngoại (FK constraint), ta phải tạo session trước khi tạo task
+    await this.conversationService.ensureSession(
+      effectiveSessionId,
+      body.question,
+    );
+
     const task = await this.tasksService.createTaskFromUpload({
       file,
       sessionId: effectiveSessionId,
       question: body.question,
     });
-
-    await this.conversationService.ensureSession(
-      effectiveSessionId,
-      task.job_id,
-      body.question,
-    );
     this.realtimeService.registerSessionClient(effectiveSessionId, clientId);
     this.realtimeService.registerTaskClient(task.job_id, clientId);
     this.realtimeService.registerTaskSession(task.job_id, effectiveSessionId);
@@ -118,6 +119,7 @@ export class ChatService {
     const task = await this.tasksService.setSegmentationSuccess(
       body.job_id,
       body.mask_all_overlay || body.mask_url || null,
+      body.metrics || null,
     );
     this.realtimeService.registerTaskSession(task.job_id, task.session_id);
 
@@ -127,15 +129,36 @@ export class ChatService {
       {
         jobId: body.job_id,
         maskAllOverlay: task.mask_all_overlay,
+        metrics: task.metrics || null,
       },
       task.session_id,
     );
 
     await this.orchestrationService.enqueueVlm(
       task,
-      "",
+      task.question || "Hãy phân tích tình trạng ngập lụt của bức ảnh này và tóm tắt nguy cơ do lụt gây ra.",
       false,
       clientId,
+    );
+
+    return { status: "ok" };
+  }
+
+  async handleProgressWebhook(body: any) {
+    const { job_id, progress, est_seconds_remaining } = body;
+    const clientId = this.realtimeService.getClientIdForTask(job_id);
+    const sessionId = this.realtimeService.getSessionIdForTask(job_id);
+
+    // Gửi cập nhật tiến độ theo thời gian thực cho frontend
+    this.realtimeService.sendStatus(
+      clientId,
+      "Processing segmentation",
+      {
+        jobId: job_id,
+        progress: progress || 0,
+        estSecondsRemaining: est_seconds_remaining || 0,
+      },
+      sessionId,
     );
 
     return { status: "ok" };
@@ -247,8 +270,22 @@ export class ChatService {
       errorCode: task.error_code,
       errorMessage: task.error_message,
       updatedAt: task.updated_at,
+      metrics: task.metrics || null,
       session,
     };
+  }
+
+  async getTasksBySession(sessionId: string) {
+    const tasks = await this.tasksService.getTasksBySession(sessionId);
+    return tasks.map((task) => ({
+      jobId: task.job_id,
+      sessionId: task.session_id,
+      imageUrl: task.image_url,
+      maskAllOverlay: task.mask_all_overlay,
+      metrics: task.metrics || null,
+      status: task.status,
+      createdAt: task.created_at,
+    }));
   }
 
   async getSessionById(sessionId: string) {

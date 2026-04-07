@@ -17,6 +17,7 @@
     "test:e2e": "jest --runInBand --testPathPattern=chat.controller.spec.ts"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@nestjs/axios": "^4.0.1",
     "@nestjs/common": "^11.1.18",
     "@nestjs/config": "^4.0.3",
@@ -24,7 +25,7 @@
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/platform-express": "^11.1.18",
     "@nestjs/platform-socket.io": "^11.1.18",
-    "@nestjs/swagger": "^11.2.6",
+    "@nestjs/swagger": "^2.5.1",
     "@nestjs/typeorm": "^11.0.1",
     "@nestjs/websockets": "^11.1.18",
     "@supabase/supabase-js": "^2.39.0",
@@ -32,6 +33,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.0",
     "cloudinary": "^2.9.0",
+    "ollama": "^0.6.3",
     "pg": "^8.20.0",
     "reflect-metadata": "^0.1.13",
     "rxjs": "^7.8.1",

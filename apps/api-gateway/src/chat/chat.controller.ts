@@ -46,6 +46,11 @@ export class ChatController {
     return this.chatService.handleSegmentationWebhook(body);
   }
 
+  @Post("webhook/progress")
+  async progressWebhook(@Body() body: any) {
+    return this.chatService.handleProgressWebhook(body);
+  }
+
   @Post("webhook/vlm")
   async vlmWebhook(@Body() body: VlmCallbackDto) {
     return this.chatService.handleVlmWebhook(body);
@@ -70,6 +75,13 @@ export class ChatController {
   async getSessionById(@Param("sessionId") sessionId: string) {
     return {
       session: await this.chatService.getSessionById(sessionId),
+    };
+  }
+
+  @Get("tasks/:sessionId")
+  async getTasksBySession(@Param("sessionId") sessionId: string) {
+    return {
+      tasks: await this.chatService.getTasksBySession(sessionId),
     };
   }
 

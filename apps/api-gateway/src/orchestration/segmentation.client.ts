@@ -12,7 +12,7 @@ export class SegmentationClient {
     private readonly configService: ConfigService,
   ) {}
 
-  async trigger(jobId: string, callbackUrl: string) {
+  async trigger(jobId: string, callbackUrl: string, progressUrl?: string) {
     const endpoint = this.configService.get<string>("SEGMENT_SERVICE_URL");
 
     if (!endpoint) {
@@ -22,6 +22,7 @@ export class SegmentationClient {
     const payload = {
       job_id: jobId,
       callback_url: callbackUrl,
+      progress_url: progressUrl || undefined,
     };
 
     const candidates = this.buildEndpointCandidates(endpoint);

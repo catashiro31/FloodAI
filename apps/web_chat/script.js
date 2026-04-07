@@ -16,10 +16,13 @@ if (typeof io !== 'undefined') {
 
 // State
 let activeView = 'analysis';
-let currentTheme = localStorage.getItem('theme') || 'light';
+let currentTheme = localStorage.getItem('theme') || 'dark';
 let sessionId = localStorage.getItem('session_id') || "";
 let currentJobId = localStorage.getItem('current_job_id') || "";
 let sessions = [];
+let sessionHasImage = false;
+let currentMetrics = null;
+let isProcessing = false; // Global lock for any AI processing
 
 if (!sessionId) {
     sessionId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2);
@@ -30,18 +33,17 @@ let analysisMessages = [
   {
     id: "1",
     sender: "bot",
-    text: "Hello. I am ready to analyze your site. Please describe the water levels or affected structures for a precise assessment.",
+    text: "Chào mừng bạn đến FloodWiz! Hãy tải lên ảnh UAV/drone để bắt đầu phân tích ngập lụt. Mỗi phiên chỉ cho phép 1 ảnh.",
     createdAt: Date.now(),
     imageUrls: []
   }
 ];
 
 let selectedFiles = [];
-const MAX_SELECTED_FILES = 6;
 
 // DOM Elements
 const analysisViewEl = document.getElementById('analysis-view');
-const dashboardViewEl = document.getElementById('dashboard-view');
+const galleryViewEl = document.getElementById('gallery-view');
 const analysisChatHistoryEl = document.getElementById('analysis-chat-history');
 const analysisChatInputEl = document.getElementById('analysis-chat-input');
 const analysisSendBtnEl = document.getElementById('analysis-send-btn');
@@ -49,38 +51,85 @@ const analysisUploadTriggerEl = document.getElementById('analysis-upload-trigger
 const analysisFileInputEl = document.getElementById('analysis-file-input');
 const analysisPreviewsEl = document.getElementById('analysis-previews');
 const themeToggleEl = document.getElementById('theme-toggle');
-const themeToggleIconEl = document.getElementById('theme-toggle-icon');
 const newSessionBtnEl = document.getElementById('new-session-btn');
 const sessionListEl = document.getElementById('session-list');
+const metricsPanelEl = document.getElementById('metrics-panel');
+const galleryContentEl = document.getElementById('gallery-content');
 
-// Socket Events
+// ====================== SOCKET EVENTS ======================
+
 socket.on('connect', () => {
-    console.log('Connected to WebSocket server');
+    console.log('✅ Connected to WebSocket server:', socket.id);
     if (sessionId) {
         socket.emit('registerSession', { sessionId });
     }
 });
 
 socket.on('uploadStatus', (data) => {
+    console.log('📡 uploadStatus:', data);
     const lastBotMsg = [...analysisMessages].reverse().find(m => m.sender === 'bot');
+
+    if (data.status && data.status.includes('Segmentation complete')) {
+        // Segmentation done — show metrics, unlock chat
+        if (data.details?.metrics) {
+            currentMetrics = data.details.metrics;
+            renderMetricsPanel(currentMetrics);
+        }
+        if (data.details?.maskAllOverlay && lastBotMsg) {
+            lastBotMsg.imageUrls = [data.details.maskAllOverlay];
+        }
+        if (lastBotMsg) lastBotMsg.text = '✅ Phân đoạn hoàn tất! Ảnh mask đã được tạo.';
+        unlockChat();
+        renderAnalysisMessages(true);
+        return;
+    }
+
+    if (data.status && data.status.includes('Error')) {
+        isProcessing = false;
+        if (lastBotMsg) lastBotMsg.text = `❌ Lỗi: ${data.details?.error || data.status}`;
+        unlockChat();
+        renderAnalysisMessages(true);
+        return;
+    }
+
+    // Other status updates (queued, processing)
     if (lastBotMsg) {
-        lastBotMsg.text = `Neural Analysis: ${data.status}...`;
+        if (data.status === 'Processing segmentation' && data.details?.progress !== undefined) {
+            lastBotMsg.progress = data.details.progress;
+            lastBotMsg.estSecondsRemaining = data.details.estSecondsRemaining;
+            
+            // Cập nhật text để người dùng thấy rõ
+            if (data.details.progress < 100) {
+                lastBotMsg.text = `⏳ Đang phân tích dữ liệu... ${data.details.progress}%`;
+            } else {
+                lastBotMsg.text = `⏳ Đang tổng hợp kết quả...`;
+            }
+        } else {
+            lastBotMsg.text = `⏳ ${data.status}...`;
+            // Reset progress nếu status chuyển sang cái khác (như VLM)
+            if (data.status !== 'Processing segmentation') {
+                lastBotMsg.progress = undefined;
+            }
+        }
         renderAnalysisMessages();
     }
 });
 
 socket.on('receiveMessage', (data) => {
+    console.log('💬 receiveMessage:', data);
     if (data.jobId) {
         currentJobId = data.jobId;
         localStorage.setItem('current_job_id', currentJobId);
     }
 
-    const lastBotMsg = [...analysisMessages].reverse().find(m => m.sender === 'bot' && (m.text === "Thinking..." || m.text.includes("Neural Analysis")));
-    
-    if (lastBotMsg) {
-        lastBotMsg.text = data.reply;
-        lastBotMsg.imageUrls = data.imageUrls || [];
-        lastBotMsg.createdAt = data.createdAt ? new Date(data.createdAt).getTime() : Date.now();
+    // Find the "Thinking..." or pipeline message to replace
+    const thinkingIdx = analysisMessages.findIndex(m =>
+        m.sender === 'bot' && (m.text === 'Đang suy nghĩ...' || m.text.includes('⏳') || m.text.includes('Pipeline'))
+    );
+
+    if (thinkingIdx !== -1) {
+        analysisMessages[thinkingIdx].text = data.reply;
+        analysisMessages[thinkingIdx].imageUrls = data.imageUrls || [];
     } else {
         analysisMessages.push({
             id: Date.now().toString(),
@@ -90,11 +139,81 @@ socket.on('receiveMessage', (data) => {
             imageUrls: data.imageUrls || []
         });
     }
+
+    isProcessing = false;
+    unlockChat();
     renderAnalysisMessages(true);
-    fetchSessions(); // Refresh session list to show last message
+    fetchSessions();
+
+    if (activeView === 'gallery') {
+        renderGalleryForSession(sessionId);
+    }
 });
 
-// Functions
+// ====================== METRICS PANEL ======================
+
+function renderMetricsPanel(metrics) {
+    if (!metricsPanelEl || !metrics) return;
+    metricsPanelEl.classList.remove('hidden');
+
+    const statusEl = document.getElementById('metric-status');
+    if (statusEl) {
+        statusEl.innerHTML = metrics.is_flooded
+            ? '<span class="inline-flex items-center gap-1.5 rounded-full bg-red-500/20 px-3 py-1 text-xs font-black text-red-400 uppercase tracking-widest"><i data-lucide="alert-triangle" class="h-3 w-3"></i> Ngập</span>'
+            : '<span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1 text-xs font-black text-emerald-400 uppercase tracking-widest"><i data-lucide="shield-check" class="h-3 w-3"></i> An toàn</span>';
+    }
+
+    const roadEl = document.getElementById('metric-road');
+    const roadBarEl = document.getElementById('metric-road-bar');
+    if (roadEl) roadEl.textContent = `${metrics.road_flood_ratio}%`;
+    if (roadBarEl) {
+        setTimeout(() => { roadBarEl.style.width = `${Math.min(metrics.road_flood_ratio, 100)}%`; }, 100);
+    }
+
+    const bldFloodEl = document.getElementById('metric-bld-flood');
+    const bldTotalEl = document.getElementById('metric-bld-total');
+    if (bldFloodEl) bldFloodEl.textContent = metrics.building_flooded_count;
+    if (bldTotalEl) bldTotalEl.textContent = metrics.building_total_count;
+
+    const vehicleEl = document.getElementById('metric-vehicle');
+    if (vehicleEl) vehicleEl.textContent = metrics.vehicle_on_flooded_road;
+
+    const coverageEl = document.getElementById('metric-coverage');
+    if (coverageEl) coverageEl.textContent = `${metrics.flood_coverage_percent}%`;
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+// ====================== CHAT LOCK/UNLOCK ======================
+
+function lockChat() {
+    isProcessing = true;
+    if (analysisChatInputEl) {
+        analysisChatInputEl.disabled = true;
+        analysisChatInputEl.placeholder = "⏳ Đang xử lý, vui lòng chờ...";
+    }
+    if (analysisSendBtnEl) {
+        analysisSendBtnEl.disabled = true;
+        analysisSendBtnEl.classList.add('opacity-40', 'pointer-events-none');
+    }
+}
+
+function unlockChat() {
+    isProcessing = false;
+    if (analysisChatInputEl) {
+        analysisChatInputEl.disabled = false;
+        analysisChatInputEl.placeholder = sessionHasImage
+            ? "Nhập câu hỏi về ảnh đã tải lên..."
+            : "Chọn ảnh rồi nhấn gửi để bắt đầu phân tích...";
+    }
+    if (analysisSendBtnEl) {
+        analysisSendBtnEl.disabled = false;
+        analysisSendBtnEl.classList.remove('opacity-40', 'pointer-events-none');
+    }
+}
+
+// ====================== SESSIONS ======================
+
 async function fetchSessions() {
     try {
         const res = await fetch(`${BACKEND_URL}/chat/sessions?limit=20`);
@@ -110,19 +229,19 @@ async function fetchSessions() {
 
 function renderSessionList() {
     if (!sessionListEl) return;
-    
+
     if (sessions.length === 0) {
-        sessionListEl.innerHTML = '<div class="px-3 py-2 text-xs text-ui-muted/40 italic">No recent sessions</div>';
+        sessionListEl.innerHTML = '<div class="px-3 py-2 text-xs text-ui-muted/40 italic">Chưa có phiên nào</div>';
         return;
     }
 
     sessionListEl.innerHTML = sessions.map(s => {
         const isActive = s.sessionId === sessionId;
-        const lastMsg = s.lastReply || s.lastQuestion || "New conversation";
+        const lastMsg = s.lastReply || s.lastQuestion || "Phiên đánh giá mới";
         const time = s.updatedAt ? formatRelativeTime(new Date(s.updatedAt).getTime()) : "";
 
         return `
-            <div onclick="loadSessionHistory('${s.sessionId}')" class="group relative flex flex-col gap-1 rounded-lg px-3 py-2.5 transition-all cursor-pointer ${isActive ? 'bg-brand-primary/10 border-l-2 border-brand-primary' : 'hover:bg-white/5'}">
+            <div onclick="loadSessionHistory('${s.sessionId}')" class="group relative flex flex-col gap-1 rounded-xl px-3 py-2.5 transition-all cursor-pointer ${isActive ? 'bg-brand-primary/10 border-l-2 border-brand-primary' : 'hover:bg-white/5'}">
                 <div class="flex items-center justify-between">
                     <span class="text-[11px] font-bold tracking-tight ${isActive ? 'text-brand-primary' : 'text-ui-text'} truncate w-32">
                         ${s.sessionId.substring(0, 8)}...
@@ -130,7 +249,7 @@ function renderSessionList() {
                     <span class="text-[9px] font-medium text-ui-muted opacity-60">${time}</span>
                 </div>
                 <p class="text-[10px] leading-tight text-ui-muted truncate opacity-80 group-hover:opacity-100">
-                    ${lastMsg}
+                    ${lastMsg.length > 50 ? lastMsg.substring(0, 50) + '...' : lastMsg}
                 </p>
             </div>
         `;
@@ -139,66 +258,247 @@ function renderSessionList() {
 
 async function loadSessionHistory(id) {
     if (!id) return;
-    
-    // Set active session
+
     sessionId = id;
     localStorage.setItem('session_id', id);
     socket.emit('registerSession', { sessionId });
+
+    // Reset state
+    sessionHasImage = false;
+    currentMetrics = null;
+    isProcessing = false;
+    if (metricsPanelEl) metricsPanelEl.classList.add('hidden');
+
+    // Reset messages to default welcome
+    analysisMessages = [{
+        id: "1", sender: "bot",
+        text: "Đang tải lịch sử phiên...",
+        createdAt: Date.now(), imageUrls: []
+    }];
+    renderAnalysisMessages();
     renderSessionList();
 
     try {
+        // Load session history
         const res = await fetch(`${BACKEND_URL}/chat/sessions/${id}`);
         if (res.ok) {
             const data = await res.json();
             const dbSession = data.session;
-            
-            // Map history to analysisMessages
-            if (dbSession && dbSession.history) {
+            if (dbSession && dbSession.history && dbSession.history.length > 0) {
                 analysisMessages = dbSession.history.map((h, i) => ({
                     id: i.toString(),
-                    sender: h.role === 'user' ? 'user' : 'bot',
-                    text: h.content,
+                    sender: (h.role === 'user' || h.sender === 'user') ? 'user' : 'bot',
+                    text: h.content || h.text || '',
                     createdAt: h.createdAt ? new Date(h.createdAt).getTime() : Date.now(),
-                    imageUrls: [] // Current schema doesn't store image history per message easily
+                    imageUrls: h.imageUrls || []
                 }));
+            } else {
+                analysisMessages = [{
+                    id: "1", sender: "bot",
+                    text: "Phiên này chưa có lịch sử chat. Hãy tải ảnh lên để bắt đầu!",
+                    createdAt: Date.now(), imageUrls: []
+                }];
+            }
+            renderAnalysisMessages(true);
+        }
 
-                // If the session has a lastReply and it matches a task, we could potentially fetch more
-                // But for now, we just use the history array.
-                
-                renderAnalysisMessages(true);
+        // Load tasks for this session to get metrics + mask
+        const taskRes = await fetch(`${BACKEND_URL}/chat/tasks/${id}`);
+        if (taskRes.ok) {
+            const taskData = await taskRes.json();
+            const tasks = taskData.tasks || [];
+            if (tasks.length > 0) {
+                sessionHasImage = true;
+                const latestTask = tasks[0];
+                currentJobId = latestTask.jobId;
+                localStorage.setItem('current_job_id', currentJobId);
+
+                if (latestTask.metrics) {
+                    currentMetrics = latestTask.metrics;
+                    renderMetricsPanel(currentMetrics);
+                }
+
+                if (['success_segmentation', 'success_vlm', 'processing_vlm'].includes(latestTask.status)) {
+                    unlockChat();
+                } else {
+                    lockChat();
+                }
+                updateUploadButton();
+            } else {
+                unlockChat();
             }
         }
+
+        if (activeView === 'gallery') renderGalleryForSession(id);
     } catch (err) {
         console.error('Failed to load history:', err);
+        analysisMessages = [{
+            id: "1", sender: "bot",
+            text: "Không thể tải lịch sử. Hãy thử tạo phiên mới.",
+            createdAt: Date.now(), imageUrls: []
+        }];
+        unlockChat();
+        renderAnalysisMessages(true);
     }
 }
 
 function formatRelativeTime(createdAt) {
     const diffMs = Math.max(0, Date.now() - createdAt);
     const diffMinutes = Math.floor(diffMs / 60000);
-    if (diffMinutes === 0) return 'Just now';
-    if (diffMinutes === 1) return '1 min ago';
-    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+    if (diffMinutes === 0) return 'Vừa xong';
+    if (diffMinutes < 60) return `${diffMinutes} ph`;
     const diffHours = Math.floor(diffMinutes / 60);
-    if (diffHours < 24) return `${diffHours}h ago`;
-    return new Date(createdAt).toLocaleDateString();
+    if (diffHours < 24) return `${diffHours} giờ`;
+    return new Date(createdAt).toLocaleDateString('vi-VN');
 }
+
+// ====================== VIEW SWITCHING ======================
 
 function switchView(view) {
     activeView = view;
-    
+
+    document.querySelectorAll('.nav-link').forEach(item => {
+        const text = item.textContent.trim().toLowerCase();
+        if ((view === 'analysis' && text === 'assessment') || (view === 'gallery' && text === 'mask gallery')) {
+            item.classList.add('text-brand-primary');
+            item.classList.remove('text-ui-muted');
+        } else {
+            item.classList.remove('text-brand-primary');
+            item.classList.add('text-ui-muted');
+        }
+    });
+
     if (view === 'analysis') {
         analysisViewEl.classList.remove('hidden');
         analysisViewEl.classList.add('flex');
-        dashboardViewEl.classList.add('hidden');
-        renderAnalysisMessages();
+        galleryViewEl.classList.add('hidden');
+        galleryViewEl.classList.remove('flex');
+        renderAnalysisMessages(true);
     } else {
         analysisViewEl.classList.add('hidden');
         analysisViewEl.classList.remove('flex');
-        dashboardViewEl.classList.remove('hidden');
-        dashboardViewEl.classList.add('flex');
+        galleryViewEl.classList.remove('hidden');
+        galleryViewEl.classList.add('flex');
+        renderGalleryForSession(sessionId);
     }
 }
+
+// ====================== GALLERY WITH SLIDER ======================
+
+async function renderGalleryForSession(sid) {
+    if (!galleryContentEl) return;
+
+    galleryContentEl.innerHTML = '<div class="text-center text-ui-muted py-20 animate-pulse">Đang tải dữ liệu gallery...</div>';
+
+    try {
+        const res = await fetch(`${BACKEND_URL}/chat/tasks/${sid}`);
+        if (!res.ok) throw new Error('Failed to fetch tasks');
+        const data = await res.json();
+        const tasks = (data.tasks || []).filter(t => t.maskAllOverlay && t.imageUrl);
+
+        if (tasks.length === 0) {
+            galleryContentEl.innerHTML = `
+                <div class="flex flex-col items-center justify-center py-20 glass-panel rounded-2xl">
+                    <i data-lucide="image-off" class="h-12 w-12 text-ui-muted/30 mb-4"></i>
+                    <p class="text-sm font-semibold text-ui-text mb-2">Chưa có mask nào cho phiên này</p>
+                    <p class="text-[10px] uppercase tracking-widest text-ui-muted">Tải ảnh lên trong trang Assessment để tạo mask</p>
+                </div>`;
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+            return;
+        }
+
+        galleryContentEl.innerHTML = tasks.map((task, idx) => {
+            const metricsHtml = task.metrics ? buildMetricsBadgesHtml(task.metrics) : '';
+            return `
+                <div class="glass-card rounded-2xl overflow-hidden animate-slide-up" style="animation-delay: ${idx * 100}ms">
+                    <!-- Comparison Slider -->
+                    <div class="comparison-slider" data-idx="${idx}">
+                        <div class="comparison-container relative overflow-hidden" style="aspect-ratio: 16/10">
+                            <img class="comparison-img-bottom absolute inset-0 w-full h-full object-cover" src="${task.maskAllOverlay}" alt="Mask overlay" />
+                            <div class="comparison-img-top-wrapper absolute inset-0 overflow-hidden" style="width: 50%">
+                                <img class="comparison-img-top w-full h-full object-cover" src="${task.imageUrl}" alt="Original" style="width: calc(200%); max-width: none;" />
+                            </div>
+                            <div class="comparison-handle absolute top-0 bottom-0 flex items-center justify-center cursor-ew-resize z-10" style="left: 50%; transform: translateX(-50%)">
+                                <div class="w-1 h-full bg-white/80 shadow-xl"></div>
+                                <div class="absolute w-10 h-10 rounded-full bg-white/20 backdrop-blur-md border-2 border-white/60 flex items-center justify-center shadow-2xl">
+                                    <i data-lucide="move-horizontal" class="h-4 w-4 text-white"></i>
+                                </div>
+                            </div>
+                            <div class="absolute top-4 left-4 z-20">
+                                <span class="rounded-full bg-black/50 backdrop-blur-md px-3 py-1.5 text-[9px] font-black uppercase tracking-widest text-white flex items-center gap-1.5">
+                                    <i data-lucide="image" class="h-3 w-3"></i> Ảnh gốc
+                                </span>
+                            </div>
+                            <div class="absolute top-4 right-4 z-20">
+                                <span class="rounded-full bg-brand-primary/80 backdrop-blur-md px-3 py-1.5 text-[9px] font-black uppercase tracking-widest text-white flex items-center gap-1.5">
+                                    <i data-lucide="layers" class="h-3 w-3"></i> Mask AI
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Metrics row -->
+                    ${metricsHtml ? `<div class="p-5 border-t border-white/5">${metricsHtml}</div>` : ''}
+                </div>
+            `;
+        }).join('');
+
+        requestAnimationFrame(() => {
+            initComparisonSliders();
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        });
+    } catch (err) {
+        console.error('Gallery fetch error:', err);
+        galleryContentEl.innerHTML = '<div class="text-center text-red-400 py-20">Không thể tải gallery</div>';
+    }
+}
+
+function buildMetricsBadgesHtml(metrics) {
+    const statusBadge = metrics.is_flooded
+        ? '<span class="rounded-full bg-red-500/20 px-2.5 py-1 text-[9px] font-black text-red-400 uppercase flex items-center gap-1"><i data-lucide="alert-triangle" class="h-3 w-3"></i> Ngập</span>'
+        : '<span class="rounded-full bg-emerald-500/20 px-2.5 py-1 text-[9px] font-black text-emerald-400 uppercase flex items-center gap-1"><i data-lucide="shield-check" class="h-3 w-3"></i> An toàn</span>';
+
+    return `
+        <div class="flex flex-wrap items-center gap-3">
+            ${statusBadge}
+            <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="road" class="h-3 w-3 text-brand-primary"></i> Đường ngập: <strong class="text-brand-primary">${metrics.road_flood_ratio}%</strong></span>
+            <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="building" class="h-3 w-3 text-red-400"></i> Nhà ngập: <strong class="text-red-400">${metrics.building_flooded_count}</strong>/${metrics.building_total_count}</span>
+            <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="car" class="h-3 w-3 text-orange-400"></i> Xe: <strong class="text-orange-400">${metrics.vehicle_on_flooded_road}</strong></span>
+            <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="droplets" class="h-3 w-3 text-brand-primary"></i> Phủ ngập: <strong class="text-brand-primary">${metrics.flood_coverage_percent}%</strong></span>
+        </div>
+    `;
+}
+
+function initComparisonSliders() {
+    document.querySelectorAll('.comparison-slider').forEach(slider => {
+        const container = slider.querySelector('.comparison-container');
+        const handle = slider.querySelector('.comparison-handle');
+        const topWrapper = slider.querySelector('.comparison-img-top-wrapper');
+        if (!container || !handle || !topWrapper) return;
+
+        let isDragging = false;
+
+        function updateSlider(clientX) {
+            const rect = container.getBoundingClientRect();
+            let x = clientX - rect.left;
+            x = Math.max(0, Math.min(x, rect.width));
+            const percent = (x / rect.width) * 100;
+            topWrapper.style.width = `${percent}%`;
+            handle.style.left = `${percent}%`;
+        }
+
+        handle.addEventListener('mousedown', (e) => { isDragging = true; e.preventDefault(); });
+        container.addEventListener('mousedown', (e) => { isDragging = true; updateSlider(e.clientX); });
+        window.addEventListener('mouseup', () => { isDragging = false; });
+        window.addEventListener('mousemove', (e) => { if (isDragging) updateSlider(e.clientX); });
+
+        handle.addEventListener('touchstart', (e) => { isDragging = true; e.preventDefault(); });
+        container.addEventListener('touchstart', (e) => { isDragging = true; updateSlider(e.touches[0].clientX); });
+        window.addEventListener('touchend', () => { isDragging = false; });
+        window.addEventListener('touchmove', (e) => { if (isDragging) updateSlider(e.touches[0].clientX); });
+    });
+}
+
+// ====================== CHAT RENDERING ======================
 
 function toggleTheme() {
     currentTheme = currentTheme === 'light' ? 'dark' : 'light';
@@ -208,6 +508,13 @@ function toggleTheme() {
 function applyTheme() {
     document.documentElement.setAttribute('data-theme', currentTheme);
     localStorage.setItem('theme', currentTheme);
+
+    if (themeToggleEl) {
+        themeToggleEl.innerHTML = currentTheme === 'light'
+            ? '<i data-lucide="moon" class="h-5 w-5"></i>'
+            : '<i data-lucide="sun" class="h-5 w-5"></i>';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }
 }
 
 function createNewSession() {
@@ -216,18 +523,35 @@ function createNewSession() {
     currentJobId = '';
     localStorage.removeItem('current_job_id');
     socket.emit('registerSession', { sessionId });
-    analysisMessages = [
-        {
-            id: "1",
-            sender: "bot",
-            text: "Ready for new impact assessment. (New Session Started)",
-            createdAt: Date.now(),
-            imageUrls: []
-        }
-    ];
+    sessionHasImage = false;
+    currentMetrics = null;
+    isProcessing = false;
+    if (metricsPanelEl) metricsPanelEl.classList.add('hidden');
+
+    analysisMessages = [{
+        id: "1", sender: "bot",
+        text: "Phiên mới đã được tạo! Hãy tải ảnh UAV/drone lên để bắt đầu phân tích ngập lụt.",
+        createdAt: Date.now(), imageUrls: []
+    }];
     clearSelectedFiles();
+    unlockChat();
+    updateUploadButton();
     renderAnalysisMessages(true);
     fetchSessions();
+}
+
+function updateUploadButton() {
+    if (analysisUploadTriggerEl) {
+        if (sessionHasImage) {
+            analysisUploadTriggerEl.disabled = true;
+            analysisUploadTriggerEl.classList.add('opacity-30', 'cursor-not-allowed');
+            analysisUploadTriggerEl.title = 'Ảnh đã được tải lên cho phiên này';
+        } else {
+            analysisUploadTriggerEl.disabled = false;
+            analysisUploadTriggerEl.classList.remove('opacity-30', 'cursor-not-allowed');
+            analysisUploadTriggerEl.title = 'Tải ảnh lên (1 ảnh mỗi phiên)';
+        }
+    }
 }
 
 function renderAnalysisMessages(scrollToBottom = false) {
@@ -236,64 +560,70 @@ function renderAnalysisMessages(scrollToBottom = false) {
         const safeText = (msg.text || '').trim();
         const hasText = safeText.length > 0;
         const hasImages = msg.imageUrls && msg.imageUrls.length > 0;
-        const imageColsClass = msg.imageUrls && msg.imageUrls.length > 1 ? 'grid-cols-2' : 'grid-cols-1';
-        const authorLabel = msg.sender === "bot" ? "Neural Engine" : "Field Agent";
+        const isBot = msg.sender === "bot" || msg.sender === "assistant";
+        const authorLabel = isBot ? "Neural Engine" : "Người dùng";
 
         const textHtml = hasText
-            ? `<div class="rounded-2xl p-5 shadow-sm ${msg.sender === "bot" ? "rounded-bl-none glass-panel" : "chat-bubble-user"}">
-                    <p class="text-sm font-medium leading-relaxed">${safeText.replace(/\n/g, '<br>')}</p>
+            ? `<div class="rounded-2xl p-5 shadow-sm ${isBot ? "rounded-bl-none glass-panel" : "chat-bubble-user"}">
+                    <p class="text-sm font-medium leading-relaxed whitespace-pre-wrap">${safeText.replace(/\n/g, '<br>')}</p>
                </div>`
             : '';
 
         const imagesHtml = hasImages
-            ? `<div class="${hasText ? "mt-4 " : ""}grid ${imageColsClass} gap-3">
-                    ${msg.imageUrls.map(url => `<img src="${url}" class="h-64 w-full rounded-2xl border border-white/10 object-cover shadow-2xl" />`).join('')}
+            ? `<div class="${hasText ? "mt-4 " : ""}grid gap-3 grid-cols-1">
+                    ${msg.imageUrls.map(url => `<img src="${url}" class="max-h-72 w-full rounded-2xl border border-white/10 object-cover shadow-2xl cursor-pointer hover:opacity-90 transition-opacity" onclick="window.open('${url}', '_blank')" />`).join('')}
                </div>`
             : '';
 
-        const iconPath = msg.sender === "bot" ? "assets/icons/bot-message-square.svg" : "assets/icons/activity.svg";
+        const progressHtml = (isBot && msg.progress !== undefined)
+            ? `<div class="mt-3 w-full min-w-[200px]">
+                    <div class="flex items-center justify-between mb-1.5">
+                        <span class="text-[9px] font-black uppercase tracking-widest text-brand-primary flex items-center gap-1">
+                            <span class="relative flex h-2 w-2">
+                              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-primary opacity-75"></span>
+                              <span class="relative inline-flex rounded-full h-2 w-2 bg-brand-primary"></span>
+                            </span>
+                            Neural Progress
+                        </span>
+                        <span class="text-[10px] font-black text-brand-primary">${msg.progress}%</span>
+                    </div>
+                    <div class="h-2 w-full bg-white/5 rounded-full overflow-hidden border border-white/5 p-[1px]">
+                        <div class="h-full bg-gradient-to-r from-brand-primary/40 to-brand-primary rounded-full transition-all duration-700 cubic-bezier(0.4, 0, 0.2, 1)" style="width: ${msg.progress}%"></div>
+                    </div>
+                    ${msg.estSecondsRemaining > 0 ? `<p class="mt-1.5 text-[9px] font-bold text-ui-muted opacity-50 uppercase tracking-widest text-right animate-pulse">Còn khoảng ${msg.estSecondsRemaining}s...</p>` : ''}
+               </div>`
+            : '';
+
+        const iconName = isBot ? "bot" : "user";
 
         return `
             <div class="flex gap-5 ${msg.sender === "user" ? "flex-row-reverse" : ""} animate-slide-up">
-                <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl ${msg.sender === "bot" ? "bg-brand-primary/10 text-brand-primary" : "bg-white/5 text-ui-muted"}">
-                    <span class="icon-custom w-5 h-5" style="-webkit-mask-image: url('${iconPath}'); mask-image: url('${iconPath}');"></span>
+                <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl ${isBot ? "bg-brand-primary/10 text-brand-primary" : "bg-white/5 text-ui-muted"}">
+                    <i data-lucide="${iconName}" class="w-5 h-5"></i>
                 </div>
                 <div class="max-w-[80%]">
                     ${textHtml}
+                    ${progressHtml}
                     ${imagesHtml}
-                    <p class="mt-3 px-1 text-[10px] font-black uppercase tracking-[0.2em] text-ui-muted/60 ${msg.sender === "user" ? "text-right" : ""}">
+                    <p class="mt-2 px-1 text-[10px] font-bold uppercase tracking-[0.15em] text-ui-muted/50 ${msg.sender === "user" ? "text-right" : ""}">
                         ${authorLabel} • ${formatRelativeTime(msg.createdAt || Date.now())}
                     </p>
                 </div>
             </div>
         `;
     }).join('');
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+
     if (scrollToBottom) {
         analysisChatHistoryEl.scrollTop = analysisChatHistoryEl.scrollHeight;
     }
 }
 
+// ====================== FILE HANDLING ======================
+
 function isImageFile(file) {
     return Boolean(file && typeof file.type === 'string' && file.type.startsWith('image/'));
-}
-
-function getFileKey(file) {
-    return `${file.name}_${file.size}_${file.lastModified}`;
-}
-
-function appendSelectedFiles(files) {
-    const incoming = files.filter(isImageFile);
-    if (incoming.length === 0) return;
-
-    const seen = new Set(selectedFiles.map(getFileKey));
-    for (const file of incoming) {
-        const key = getFileKey(file);
-        if (seen.has(key)) continue;
-        if (selectedFiles.length >= MAX_SELECTED_FILES) break;
-        selectedFiles.push(file);
-        seen.add(key);
-    }
-    renderSelectedPreviews();
 }
 
 function clearSelectedFiles() {
@@ -307,122 +637,142 @@ function renderSelectedPreviews() {
     analysisPreviewsEl.innerHTML = selectedFiles.map((file, index) => `
         <div class="relative h-20 w-20 overflow-hidden rounded-xl border border-white/10 shadow-xl group">
             <img src="${URL.createObjectURL(file)}" class="h-full w-full object-cover transition-transform group-hover:scale-110" />
-            <button type="button" data-remove-index="${index}" class="preview-remove-btn absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-black text-white opacity-0 transition-opacity group-hover:opacity-100" aria-label="Remove image">×</button>
+            <button type="button" data-remove-index="${index}" class="preview-remove-btn absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-black text-white opacity-0 transition-opacity group-hover:opacity-100" aria-label="Xóa ảnh">×</button>
         </div>
     `).join('');
 }
 
 function handleGlobalPaste(event) {
-    if (activeView !== 'analysis') return;
+    if (activeView !== 'analysis' || sessionHasImage || isProcessing) return;
 
     const target = event.target;
-    const isEditable =
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        (target && target.isContentEditable);
-
+    const isEditable = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target && target.isContentEditable);
     if (isEditable && target !== analysisChatInputEl) return;
 
     const clipboardItems = Array.from(event.clipboardData?.items || []);
-    const pastedImages = clipboardItems
-        .filter(item => item.kind === 'file')
-        .map(item => item.getAsFile())
-        .filter(isImageFile);
-
+    const pastedImages = clipboardItems.filter(item => item.kind === 'file').map(item => item.getAsFile()).filter(isImageFile);
     if (pastedImages.length === 0) return;
 
     event.preventDefault();
-    appendSelectedFiles(pastedImages);
+    selectedFiles = [pastedImages[0]];
+    renderSelectedPreviews();
 }
 
+// ====================== SEND MESSAGE ======================
+
 async function handleSendMessage() {
+    if (isProcessing) return;
+
     const text = analysisChatInputEl.value.trim();
     const filesToSend = [...selectedFiles];
-    
+
+    // Nothing to send
     if (filesToSend.length === 0 && !text) return;
-    
+
+    // Text-only not allowed until image is uploaded
+    if (!sessionHasImage && filesToSend.length === 0) return;
+
     analysisChatInputEl.value = '';
     clearSelectedFiles();
 
-    // Add User Message
+    // Add user message
     analysisMessages.push({
         id: Date.now().toString(),
         sender: 'user',
-        text: text || (filesToSend.length > 0 ? "Analyzing visual data..." : ""),
+        text: text || (filesToSend.length > 0 ? "📷 Đang phân tích ảnh..." : ""),
         createdAt: Date.now(),
         imageUrls: filesToSend.map(file => URL.createObjectURL(file))
     });
-    renderAnalysisMessages(true);
 
-    // Add Bot Loading Message
-    const botMsgId = (Date.now() + 1).toString();
+    // Add thinking message
     analysisMessages.push({
-        id: botMsgId,
+        id: (Date.now() + 1).toString(),
         sender: 'bot',
-        text: "Thinking...",
+        text: filesToSend.length > 0 ? "⏳ Đang xử lý phân đoạn..." : "Đang suy nghĩ...",
         createdAt: Date.now(),
         imageUrls: []
     });
     renderAnalysisMessages(true);
+    lockChat();
 
-    if (filesToSend.length === 0) {
+    if (filesToSend.length > 0) {
+        // Image upload flow
+        sessionHasImage = true;
+        updateUploadButton();
+
+        try {
+            const file = filesToSend[0];
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('question', text || '');
+
+            const uploadRes = await fetch(`${BACKEND_URL}/chat/upload`, {
+                method: 'POST',
+                headers: {
+                    'x-client-id': socket.id,
+                    'x-session-id': sessionId
+                },
+                body: formData
+            });
+
+            if (uploadRes.ok) {
+                const uploadData = await uploadRes.json();
+                if (uploadData.jobId) {
+                    currentJobId = uploadData.jobId;
+                    localStorage.setItem('current_job_id', currentJobId);
+                }
+                if (uploadData.sessionId) {
+                    sessionId = uploadData.sessionId;
+                    localStorage.setItem('session_id', sessionId);
+                    socket.emit('registerSession', { sessionId });
+                }
+            } else {
+                const errData = await uploadRes.json().catch(() => ({}));
+                const lastBot = [...analysisMessages].reverse().find(m => m.sender === 'bot');
+                if (lastBot) lastBot.text = `❌ Lỗi upload: ${errData.message || uploadRes.statusText}`;
+                unlockChat();
+                renderAnalysisMessages(true);
+            }
+            fetchSessions();
+        } catch (error) {
+            console.error('Pipeline error:', error);
+            const lastBot = [...analysisMessages].reverse().find(m => m.sender === 'bot');
+            if (lastBot) lastBot.text = `❌ Lỗi kết nối: ${error.message}`;
+            unlockChat();
+            renderAnalysisMessages(true);
+        }
+    } else {
+        // Text-only follow-up (chat with VLM)
         socket.emit('sendMessage', {
             message: text,
             jobId: currentJobId || undefined,
             sessionId: sessionId
         });
-    } else {
-        try {
-            for (const file of filesToSend) {
-                const formData = new FormData();
-                formData.append('file', file);
-                formData.append('question', text || '');
-                
-                const uploadRes = await fetch(`${BACKEND_URL}/chat/upload`, {
-                    method: 'POST',
-                    headers: {
-                        'x-client-id': socket.id,
-                        'x-session-id': sessionId
-                    },
-                    body: formData
-                });
-                
-                if (uploadRes.ok) {
-                    const uploadData = await uploadRes.json();
-                    if (uploadData.jobId) {
-                        currentJobId = uploadData.jobId;
-                        localStorage.setItem('current_job_id', currentJobId);
-                    }
-                    if (uploadData.sessionId) {
-                        sessionId = uploadData.sessionId;
-                        localStorage.setItem('session_id', sessionId);
-                        socket.emit('registerSession', { sessionId });
-                    }
-                }
-            }
-            fetchSessions();
-        } catch (error) {
-            console.error('Pipeline error:', error);
-        }
     }
 }
 
-// Event Listeners
+// ====================== EVENT LISTENERS ======================
+
 analysisSendBtnEl?.addEventListener('click', handleSendMessage);
 analysisChatInputEl?.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') handleSendMessage();
 });
-analysisUploadTriggerEl?.addEventListener('click', () => analysisFileInputEl?.click());
+analysisUploadTriggerEl?.addEventListener('click', () => {
+    if (!sessionHasImage && !isProcessing) analysisFileInputEl?.click();
+});
 analysisFileInputEl?.addEventListener('change', (e) => {
-    appendSelectedFiles(Array.from(e.target.files || []));
+    if (sessionHasImage || isProcessing) return;
+    const files = Array.from(e.target.files || []).filter(isImageFile);
+    if (files.length > 0) {
+        selectedFiles = [files[0]];
+        renderSelectedPreviews();
+    }
     analysisFileInputEl.value = '';
 });
 analysisPreviewsEl?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-remove-index]');
     if (!btn) return;
-    const index = Number(btn.getAttribute('data-remove-index'));
-    if (!Number.isInteger(index) || index < 0 || index >= selectedFiles.length) return;
-    selectedFiles.splice(index, 1);
+    selectedFiles = [];
     renderSelectedPreviews();
 });
 document.addEventListener('paste', handleGlobalPaste);
@@ -430,12 +780,14 @@ document.addEventListener('paste', handleGlobalPaste);
 themeToggleEl?.addEventListener('click', toggleTheme);
 newSessionBtnEl?.addEventListener('click', createNewSession);
 
-// Initialization
+// ====================== INITIALIZATION ======================
+
 document.addEventListener('DOMContentLoaded', () => {
     applyTheme();
     switchView('analysis');
-    
-    // Load initial data
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+
     if (sessionId) {
         loadSessionHistory(sessionId);
     }

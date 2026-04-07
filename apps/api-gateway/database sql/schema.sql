@@ -28,9 +28,13 @@ CREATE TABLE IF NOT EXISTS public.tasks (
   job_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id uuid NOT NULL REFERENCES public.sessions (session_id) ON DELETE CASCADE,
   image_url text NOT NULL,
-  status public.task_status NOT NULL DEFAULT 'queued', -- Dùng kiểu ENUM và set mặc định
+  status public.task_status NOT NULL DEFAULT 'queued',
   question text NULL,
   mask_all_overlay text NULL,
+  
+  -- CỘT MỚI ĐƯỢC THÊM VÀO ĐỂ LƯU KẾT QUẢ TỪ PYTHON WORKER
+  metrics jsonb NULL DEFAULT '{}'::jsonb, 
+  
   vlm_analysis text NULL,
   error_code text NULL,
   error_message text NULL,

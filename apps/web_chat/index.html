@@ -3,267 +3,175 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FloodGuard AI</title>
+    <title>FloodWiz | Neural Segmentation Pipeline</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
     <script>
         tailwind.config = {
             theme: {
                 extend: {
+                    fontFamily: { sans: ['Outfit', 'sans-serif'] },
                     colors: {
-                        brand: {
-                            primary: 'var(--accent-primary)',
-                            secondary: 'var(--accent-secondary)',
-                        },
-                        ui: {
-                            bg: 'var(--bg-primary)',
-                            card: 'var(--card-bg)',
-                            text: 'var(--text-primary)',
-                            muted: 'var(--text-muted)',
-                        }
+                        brand: { primary: 'var(--accent-primary)', secondary: 'var(--accent-secondary)' },
+                        ui: { bg: 'var(--bg-primary)', card: 'var(--card-bg)', text: 'var(--text-primary)', muted: 'var(--text-muted)' }
                     }
                 }
             }
         }
     </script>
 </head>
-<body class="bg-ui-bg text-ui-text min-h-screen">
+<body class="bg-ui-bg text-ui-text min-h-screen font-sans selection:bg-brand-primary/30">
 
-    <!-- Unified Navbar -->
-    <nav class="fixed top-0 z-50 flex w-full items-center justify-between glass-nav px-6 py-3">
-        <div class="text-xl font-bold tracking-tighter text-brand-primary">FloodGuard AI</div>
-        <div class="hidden items-center gap-8 md:flex">
-            <button class="nav-link text-sm font-medium tracking-tight text-ui-muted transition-colors hover:text-brand-primary" onclick="switchView('analysis')">Analysis</button>
-            <button class="nav-link text-sm font-medium tracking-tight text-ui-muted transition-colors hover:text-brand-primary" onclick="switchView('dashboard')">Safety Resources</button>
-            <a class="text-sm font-medium tracking-tight text-ui-muted transition-colors hover:text-brand-primary" href="#">Emergency Contacts</a>
+    <!-- Navbar -->
+    <nav class="fixed top-0 z-50 flex w-full items-center justify-between glass-nav px-10 py-3">
+        <div class="flex items-center gap-3 w-1/4">
+            <div class="h-9 w-9 rounded-xl bg-gradient-to-br from-brand-primary to-brand-secondary flex items-center justify-center shadow-lg shadow-brand-primary/20">
+                <i data-lucide="waves" class="h-5 w-5 text-white"></i>
+            </div>
+            <div class="flex flex-col">
+                <span class="text-sm font-black tracking-tighter text-brand-primary leading-none uppercase">FloodWiz</span>
+                <span class="text-[8px] font-bold text-ui-muted tracking-[0.2em] uppercase leading-tight">Neural Pipeline</span>
+            </div>
         </div>
-        <div class="flex items-center gap-4">
-            <!-- Theme Toggle -->
-            <button id="theme-toggle" class="scale-95 text-ui-muted transition-all hover:text-brand-primary active:opacity-80">
-                <span id="theme-toggle-icon" class="icon-custom h-5 w-5" style="--icon:url('assets/icons/settings.svg');"></span>
+        <div class="flex items-center gap-12">
+            <button class="nav-link text-xs font-black uppercase tracking-widest text-ui-muted transition-all hover:text-brand-primary relative group" onclick="switchView('analysis')">
+                Assessment<span class="absolute -bottom-2 left-1/2 -translate-x-1/2 h-1 w-1 rounded-full bg-brand-primary opacity-0 transition-all group-hover:opacity-100"></span>
             </button>
-            <button class="scale-95 text-ui-muted transition-all hover:text-brand-primary active:opacity-80"><span class="icon-custom h-5 w-5" style="--icon:url('assets/icons/triangle-alert.svg');"></span></button>
-            <button class="scale-95 text-ui-muted transition-all hover:text-brand-primary active:opacity-80"><span class="icon-custom h-5 w-5" style="--icon:url('assets/icons/activity.svg');"></span></button>
+            <button class="nav-link text-xs font-black uppercase tracking-widest text-ui-muted transition-all hover:text-brand-primary relative group" onclick="switchView('gallery')">
+                Mask Gallery<span class="absolute -bottom-2 left-1/2 -translate-x-1/2 h-1 w-1 rounded-full bg-brand-primary opacity-0 transition-all group-hover:opacity-100"></span>
+            </button>
+        </div>
+        <div class="flex items-center justify-end gap-6 w-1/4">
+            <div class="hidden lg:flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/5 px-3 py-1.5">
+                <div class="h-1 w-1 animate-pulse rounded-full bg-emerald-500"></div>
+                <span class="text-[9px] font-black uppercase tracking-widest text-emerald-500">Node Active</span>
+            </div>
+            <button id="theme-toggle" class="flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 text-ui-muted transition-all hover:bg-brand-primary/10 hover:text-brand-primary">
+                <i data-lucide="settings" class="h-5 w-5"></i>
+            </button>
         </div>
     </nav>
 
-    <!-- Unified Sidebar -->
-    <aside class="fixed left-0 top-0 hidden h-screen w-64 flex-col gap-4 glass-sidebar p-4 pt-16 md:flex">
-        <div class="px-2 py-4">
-            <h2 class="text-lg font-black text-ui-text" id="sidebar-title">Impact Analysis</h2>
-            <p class="text-[10px] font-bold uppercase tracking-[0.2em] text-brand-primary opacity-70">Digital Cartographer</p>
-        </div>
-        <nav class="flex flex-col gap-1">
-            <a id="nav-item-primary" class="flex items-center gap-3 rounded-lg bg-white/10 px-3 py-2.5 text-sm font-semibold tracking-wide text-brand-primary shadow-sm transition-transform duration-200" href="#">
-                <span id="nav-icon-primary" class="icon-custom h-5 w-5" style="--icon:url('assets/icons/cloud-rain-wind.svg');"></span>
-                <span id="nav-text-primary">Upload & Analyze</span>
-            </a>
-            <a id="nav-item-secondary" class="flex items-center gap-3 px-3 py-2.5 text-sm font-semibold tracking-wide text-ui-muted transition-transform duration-200 hover:translate-x-1 hover:bg-white/5" href="#">
-                <span id="nav-icon-secondary" class="icon-custom h-5 w-5" style="--icon:url('assets/icons/terminal.svg');"></span>
-                <span id="nav-text-secondary">Historical Reports</span>
-            </a>
-        </nav>
-
-        <div class="flex flex-col gap-2 mt-4 flex-1 overflow-hidden">
-            <h3 class="px-3 text-[10px] font-black uppercase tracking-[0.2em] text-ui-muted/50 mb-2">Recent Sessions</h3>
-            <div id="session-list" class="flex flex-col gap-1 overflow-y-auto pr-1 custom-scrollbar">
-                <!-- Session items will be injected here -->
-                <div class="px-3 py-2 text-xs text-ui-muted/40 animate-pulse">Loading sessions...</div>
+    <!-- Sidebar -->
+    <aside class="fixed left-0 top-0 hidden h-screen w-72 flex-col gap-6 glass-sidebar p-6 pt-24 md:flex">
+        <div class="flex flex-col gap-3 px-2 flex-1 overflow-hidden">
+            <h2 class="text-xs font-black uppercase tracking-[0.3em] text-ui-muted/50 mb-1">Recent Sessions</h2>
+            <div id="session-list" class="flex flex-col gap-2 overflow-y-auto pr-2 custom-scrollbar">
+                <div class="px-4 py-3 text-xs text-ui-muted/30 animate-pulse bg-white/5 rounded-xl">Loading...</div>
             </div>
         </div>
-        <div class="mt-auto flex flex-col gap-1 border-t border-slate-200/10 pt-4">
-            <button class="mb-4 w-full scale-95 rounded-lg bg-gradient-to-br from-brand-primary to-brand-secondary py-3 text-sm font-bold text-white shadow-lg shadow-blue-700/20 transition-all active:opacity-80">Emergency Alert</button>
-            <a class="flex items-center gap-3 px-3 py-2 text-sm font-semibold text-ui-muted hover:bg-white/5" href="#"><span class="icon-custom h-5 w-5" style="--icon:url('assets/icons/settings.svg');"></span>Settings</a>
-            <a class="flex items-center gap-3 px-3 py-2 text-sm font-semibold text-ui-muted hover:bg-white/5" href="#"><span class="icon-custom h-5 w-5" style="--icon:url('assets/icons/terminal.svg');"></span>Help</a>
+        <div class="mt-auto space-y-3 px-2">
+            <button id="new-session-btn" class="w-full flex items-center justify-center gap-2 rounded-xl border border-brand-primary/30 bg-brand-primary/5 px-4 py-3 text-xs font-black uppercase tracking-widest text-brand-primary transition-all hover:bg-brand-primary/10 active:scale-[0.98]">
+                <i data-lucide="plus-circle" class="h-4 w-4"></i>
+                New Assessment
+            </button>
         </div>
     </aside>
 
-    <!-- Analysis View Content -->
-    <div id="analysis-view" class="flex min-h-screen flex-col pt-16 md:pl-64">
-        <main class="mx-auto max-w-6xl p-6 md:p-10 w-full">
-            <div class="mb-10 flex flex-col justify-between gap-6 md:flex-row md:items-end">
-                <div class="max-w-2xl">
-                    <p class="mb-2 text-xs font-bold uppercase tracking-widest text-brand-primary">Live Analysis Terminal</p>
-                    <h1 class="mb-4 text-4xl font-extrabold tracking-tighter text-ui-text">Flood Impact Assessment</h1>
-                    <p class="text-lg leading-relaxed text-ui-muted">Our Digital Cartographer engine processes visual data to map immediate environmental hazards and structural risks.</p>
+    <!-- ==================== ASSESSMENT VIEW ==================== -->
+    <div id="analysis-view" class="flex min-h-screen flex-col pt-20 md:pl-72">
+        <main class="mx-auto flex h-[calc(100vh-80px)] w-full max-w-5xl flex-col p-6 md:p-10">
+            <div class="mb-6 flex items-end justify-between border-b border-white/5 pb-6">
+                <div>
+                    <span class="rounded-full bg-brand-primary/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-brand-primary">Pipeline v2</span>
+                    <h1 class="mt-2 text-3xl font-extrabold tracking-tight text-ui-text">Flood Impact Assessment</h1>
                 </div>
-                <div class="flex flex-wrap items-center gap-3">
-                    <button id="new-session-btn" class="flex items-center gap-2 rounded-xl border border-brand-primary/30 bg-brand-primary/10 px-4 py-2 text-xs font-bold uppercase tracking-wider text-brand-primary transition-colors hover:bg-brand-primary/20">
-                        <span class="icon-custom h-4 w-4" style="--icon:url('assets/icons/sprout.svg');"></span>
-                        New Session
-                    </button>
-                    <div class="flex items-center gap-3 rounded-xl border border-slate-200/30 glass-card px-4 py-3">
-                        <div class="h-2 w-2 animate-pulse rounded-full bg-emerald-500"></div>
-                        <span class="text-xs font-bold tracking-tight">AI Engine: Online</span>
+            </div>
+
+            <!-- Metrics Panel (hidden until segmentation completes) -->
+            <div id="metrics-panel" class="hidden mb-6 animate-slide-up">
+                <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                    <div class="glass-card rounded-2xl p-5 text-center">
+                        <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted mb-2">Status</p>
+                        <div id="metric-status" class="text-lg font-black">—</div>
+                    </div>
+                    <div class="glass-card rounded-2xl p-5 text-center">
+                        <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted mb-2">Road Flood</p>
+                        <div id="metric-road" class="text-lg font-black text-brand-primary">—</div>
+                        <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                            <div id="metric-road-bar" class="h-full bg-brand-primary transition-all duration-1000" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div class="glass-card rounded-2xl p-5 text-center">
+                        <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted mb-2">Buildings Flooded</p>
+                        <div class="flex items-baseline justify-center gap-1">
+                            <span id="metric-bld-flood" class="text-2xl font-black text-red-400">—</span>
+                            <span class="text-sm text-ui-muted/50">/</span>
+                            <span id="metric-bld-total" class="text-sm font-bold text-ui-muted">—</span>
+                        </div>
+                    </div>
+                    <div class="glass-card rounded-2xl p-5 text-center">
+                        <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted mb-2">Vehicles at Risk</p>
+                        <div id="metric-vehicle" class="text-2xl font-black text-orange-400">—</div>
+                    </div>
+                    <div class="glass-card rounded-2xl p-5 text-center">
+                        <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted mb-2">Flood Coverage</p>
+                        <div id="metric-coverage" class="text-lg font-black text-brand-primary">—</div>
                     </div>
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 items-start gap-8 lg:grid-cols-12">
-                <div class="flex flex-col gap-6 lg:col-span-7">
-                    <div id="analysis-chat-history" class="mb-4 space-y-6">
-                        <!-- Chat messages will be injected here -->
-                    </div>
+            <!-- Chat History -->
+            <div id="analysis-chat-history" class="flex-1 space-y-8 overflow-y-auto pr-4 custom-scrollbar scroll-smooth pb-10">
+            </div>
 
-                    <div class="rounded-2xl glass-card p-4">
-                        <div class="flex flex-wrap items-center justify-between gap-3">
-                            <button id="analysis-upload-trigger" class="inline-flex items-center gap-2 rounded-lg border border-slate-200/20 glass-panel px-3 py-2 text-xs font-semibold tracking-wide text-ui-text transition-colors hover:border-brand-primary/40">
-                                <span class="icon-custom h-4 w-4 text-brand-primary" style="--icon:url('assets/icons/camera.svg');"></span>
-                                Add Images
-                            </button>
-                            <p class="text-[11px] font-semibold tracking-wide text-ui-muted">Tip: Paste image with Ctrl+V</p>
-                        </div>
-                        <input id="analysis-file-input" class="hidden" multiple accept="image/*" type="file" />
-                        <div id="analysis-previews" class="mt-3 flex flex-wrap gap-2"></div>
-                    </div>
-
-                    <div class="flex items-center rounded-2xl glass-card p-2 shadow-sm">
-                        <input id="analysis-chat-input" class="flex-1 bg-transparent px-4 py-2 text-sm outline-none" placeholder="Describe the situation or ask a safety question..." type="text" />
-                        <button id="analysis-send-btn" class="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-primary text-white shadow-lg shadow-blue-700/20">
-                            <span class="icon-custom h-4 w-4" style="--icon:url('assets/icons/send.svg');"></span>
+            <!-- Input Area -->
+            <div class="mt-auto pt-4">
+                <div class="relative flex flex-col gap-3">
+                    <div id="analysis-previews" class="flex flex-wrap gap-3 empty:hidden"></div>
+                    <div class="group relative flex items-center gap-2 rounded-2xl bg-white/5 p-2 transition-all focus-within:bg-white/10 border border-white/5 focus-within:border-brand-primary/30 shadow-2xl">
+                        <button id="analysis-upload-trigger" class="flex h-12 w-12 items-center justify-center rounded-xl text-ui-muted transition-all hover:bg-white/10 hover:text-brand-primary" title="Tải ảnh lên (1 ảnh mỗi phiên)">
+                            <i data-lucide="camera" class="h-5 w-5"></i>
+                        </button>
+                        <input id="analysis-file-input" class="hidden" accept="image/*" type="file" />
+                        <input id="analysis-chat-input" class="flex-1 bg-transparent px-4 py-3 text-sm font-medium outline-none placeholder:text-ui-muted/40" placeholder="Chọn ảnh rồi nhấn gửi để bắt đầu phân tích..." type="text" />
+                        <button id="analysis-send-btn" class="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-primary text-white shadow-lg shadow-brand-primary/20 transition-all hover:scale-105 active:scale-95">
+                            <i data-lucide="send" class="h-5 w-5"></i>
                         </button>
                     </div>
-                </div>
-
-                <div class="flex flex-col gap-6 lg:col-span-5">
-                    <div class="overflow-hidden rounded-2xl glass-card">
-                        <div class="relative h-48 overflow-hidden bg-slate-200">
-                            <img alt="Flooded city street" class="h-full w-full object-cover brightness-90 grayscale-[0.5]" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAz3HD88AQ4FMnYq2-Rpy-EfCSV2oHo7u_AOIGXt7PUN_F6OCSLjcCrif7JBYwqimbF9NZh6BQ9pbOADQOTAS3lvZ5HYmV1_BB5d76jXlP_SMWtFu3km_3E8mTxaPKvUIw2fllU22jhbwlatOlBDZdSvIteMoPGjT3TsVIszNQGTMQGlASWc7XgcryAZEK2a3ZbN8HBXbw_FgDdynhm0lbbUSZbMYbOaPJ_ZXlVVmNt1rITjniHiQHsIjNv-LWQcUjLefucKJGtovYE" />
-                            <div class="absolute inset-0 flex items-end bg-gradient-to-t from-black/60 to-transparent p-5">
-                                <div class="flex items-center gap-2">
-                                    <span class="icon-custom h-4 w-4 text-white" style="--icon:url('assets/icons/activity.svg');"></span>
-                                    <span class="text-xs font-bold tracking-tight text-white">MAPLE ST &amp; 5TH AVE • 42.36°N</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="p-6">
-                            <div class="mb-6 flex items-center justify-between">
-                                <h2 class="text-xl font-black tracking-tight">Safety Report</h2>
-                                <span class="rounded-full bg-red-100 dark:bg-red-900/40 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-red-600 dark:text-red-400">High Risk</span>
-                            </div>
-                            <div class="space-y-6">
-                                <div>
-                                    <div class="mb-2 flex items-center justify-between">
-                                        <span class="text-xs font-bold uppercase tracking-widest text-ui-muted">Predicted Water Depth</span>
-                                        <span class="text-sm font-bold text-red-500">1.2 Meters</span>
-                                    </div>
-                                    <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div class="h-full w-[85%] bg-red-500"></div></div>
-                                </div>
-                                <div>
-                                    <div class="mb-2 flex items-center justify-between">
-                                        <span class="text-xs font-bold uppercase tracking-widest text-ui-muted">Structural Integrity</span>
-                                        <span class="text-sm font-bold text-orange-500">Compromised</span>
-                                    </div>
-                                    <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div class="h-full w-[45%] bg-orange-500"></div></div>
-                                </div>
-                                <div>
-                                    <div class="mb-2 flex items-center justify-between">
-                                        <span class="text-xs font-bold uppercase tracking-widest text-ui-muted">Road Accessibility</span>
-                                        <span class="text-sm font-bold text-red-500">Impassable</span>
-                                    </div>
-                                    <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div class="h-full w-[95%] bg-red-500"></div></div>
-                                </div>
-                            </div>
-                            <div class="mt-8 border-t border-slate-200/10 pt-6">
-                                <h3 class="mb-3 text-xs font-black uppercase tracking-widest text-ui-text">AI Recommendations</h3>
-                                <ul class="space-y-3">
-                                    <li class="flex gap-3 text-sm leading-tight text-ui-muted"><span class="icon-custom h-4 w-4 shrink-0 text-red-500" style="--icon:url('assets/icons/triangle-alert.svg');"></span>Evacuate immediate area. Foundation scour detected at 5th Ave corner.</li>
-                                    <li class="flex gap-3 text-sm leading-tight text-ui-muted"><span class="icon-custom h-4 w-4 shrink-0 text-orange-500" style="--icon:url('assets/icons/activity.svg');"></span>Utility hazard: Submerged electrical junction 20m North.</li>
-                                </ul>
-                            </div>
-                            <button class="mt-8 flex w-full items-center justify-center gap-2 rounded-lg border border-brand-primary py-3 text-sm font-bold text-brand-primary transition-colors hover:bg-brand-primary/5">
-                                <span class="icon-custom h-4 w-4" style="--icon:url('assets/icons/terminal.svg');"></span>
-                                Download Technical PDF
-                            </button>
-                        </div>
-                    </div>
+                    <p class="px-4 text-[10px] font-bold text-ui-muted/40 uppercase tracking-[0.2em] text-center">Mỗi phiên 1 ảnh • Chat mở khóa sau khi phân đoạn xong</p>
                 </div>
             </div>
         </main>
     </div>
 
-    <!-- Dashboard View Content (hidden by default) -->
-    <div id="dashboard-view" class="hidden min-h-screen flex-col pt-16 md:pl-64">
-        <main class="mx-auto max-w-7xl space-y-8 p-8 w-full">
-            <section class="grid grid-cols-1 items-stretch gap-6 lg:grid-cols-3">
-                <div class="glass-panel relative overflow-hidden rounded-xl p-8 lg:col-span-2">
-                    <div class="absolute right-0 top-0 h-64 w-64 translate-x-1/2 -translate-y-1/2 rounded-full bg-brand-primary/5 blur-[80px]"></div>
-                    <div class="mb-4 flex items-center space-x-3">
-                        <span class="rounded-full border border-brand-primary/30 bg-brand-primary/20 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-brand-primary">System Active</span>
-                        <span class="text-sm text-ui-muted">Last update: 2 mins ago</span>
-                    </div>
-                    <h1 class="mb-4 text-4xl font-bold tracking-tight">Active Alerts: <span class="text-glow text-brand-primary">Moderate Risk</span></h1>
-                    <p class="max-w-xl leading-relaxed text-ui-muted">Heavy precipitation detected in the Upper Basin. Water levels are rising at 0.4m/h. Residents in Sector 7 are advised to maintain situational awareness.</p>
-                    <div class="mt-8 flex space-x-4">
-                        <button class="flex items-center space-x-2 rounded-lg bg-brand-primary px-6 py-3 font-semibold text-white transition-transform active:scale-95"><span class="icon-custom h-4 w-4" style="--icon:url('assets/icons/bot-message-square.svg');"></span><span>Quick Report</span></button>
-                        <button class="glass-panel rounded-lg px-6 py-3 font-semibold text-ui-text transition-colors hover:bg-white/10">View Detailed Analysis</button>
-                    </div>
-                </div>
-                <div class="glass-panel flex flex-col items-center justify-center rounded-xl p-6 text-center">
-                    <div class="relative mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-brand-primary/10"><span class="icon-custom h-11 w-11 animate-pulse text-brand-primary" style="--icon:url('assets/icons/waves.svg');"></span><div class="absolute inset-0 animate-ping rounded-full border border-brand-primary/20"></div></div>
-                    <h3 class="text-lg font-semibold text-brand-primary">Flood Depth Est.</h3>
-                    <div class="text-glow my-2 text-5xl font-bold text-brand-primary">1.2<span class="ml-1 text-xl font-normal opacity-60">m</span></div>
-                    <p class="text-xs uppercase tracking-widest text-ui-muted">Confidence: 94%</p>
-                </div>
-            </section>
-
-            <section class="grid grid-cols-1 gap-6 xl:grid-cols-4">
-                <div class="glass-card relative min-h-[500px] overflow-hidden rounded-xl xl:col-span-3">
-                    <div class="absolute inset-0 bg-slate-900 opacity-40"><img alt="Satellite map" class="h-full w-full object-cover opacity-50 mix-blend-luminosity" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBE9R-3nBdiDopNHo94dKYvY6tvccPqlUMUPFaK5C5LYOpIo_4KQsqpIixAhA4QNMdvG6v7G_oUyVorXQLTd6OukgKT2nbM101pv-7eRRG16ko6XbvBig9MZy3JKlj_3dHlxvGH0iyNtHnTWDwgxFxJQTAUvPT0v7MKLMdEISwY1X19BfvgSiV7aQu5irNYnlrJRSR1C0Mfg0rMe3l2JEWm5VX7tKU5jU86QaxBOVBRwfYXMj3_M_pVZXu329NnrLQXWFtoIUeNkqgL" /></div>
-                    <div class="absolute left-6 top-6 z-10 flex flex-col space-y-3">
-                        <div class="glass-panel flex flex-col space-y-2 rounded-lg p-2">
-                            <button class="rounded p-2 text-brand-primary transition-colors hover:bg-brand-primary/20"><span class="icon-custom h-4 w-4" style="--icon:url('assets/icons/activity.svg');"></span></button>
-                            <button class="rounded p-2 text-brand-primary transition-colors hover:bg-brand-primary/20"><span class="icon-custom h-4 w-4" style="--icon:url('assets/icons/terminal.svg');"></span></button>
-                        </div>
-                        <div class="glass-panel rounded-lg p-2"><button class="rounded p-2 text-brand-primary transition-colors hover:bg-brand-primary/20"><span class="icon-custom h-4 w-4" style="--icon:url('assets/icons/settings.svg');"></span></button></div>
-                    </div>
-                    <div class="absolute left-1/3 top-1/2 z-10"><div class="relative flex items-center justify-center"><div class="absolute h-24 w-24 animate-ping rounded-full bg-red-500/20"></div><div class="flex h-12 w-12 items-center justify-center rounded-full border border-red-500/50 bg-red-500/40 backdrop-blur-md"><span class="icon-custom h-4 w-4 text-white" style="--icon:url('assets/icons/triangle-alert.svg');"></span></div></div></div>
-                    <div class="glass-panel absolute bottom-6 left-6 z-10 rounded-lg p-4">
-                        <h4 class="mb-3 text-xs font-bold uppercase tracking-widest opacity-70 text-ui-text">Zone Risk Level</h4>
-                        <div class="space-y-2 text-ui-text">
-                            <div class="flex items-center space-x-3"><span class="h-3 w-3 rounded-full bg-red-500"></span><span class="text-xs">Extreme Risk</span></div>
-                            <div class="flex items-center space-x-3"><span class="h-3 w-3 rounded-full bg-orange-400"></span><span class="text-xs">Moderate Risk</span></div>
-                            <div class="flex items-center space-x-3"><span class="h-3 w-3 rounded-full bg-brand-primary"></span><span class="text-xs">Stable Zone</span></div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="glass-card flex flex-col overflow-hidden rounded-xl shadow-2xl xl:col-span-1">
-                    <div class="flex items-center justify-between border-b border-white/5 bg-white/5 p-5">
-                        <h3 class="text-sm font-semibold text-brand-primary">Live Feed</h3>
-                        <span class="flex h-2 w-2 animate-pulse rounded-full bg-brand-primary"></span>
-                    </div>
-                    <div id="dashboard-live-feed" class="flex-1 space-y-6 overflow-y-auto p-5">
-                        <!-- Live feed items injected here -->
-                    </div>
-                    <button class="border-t border-white/5 p-4 text-center text-xs font-medium uppercase tracking-widest text-brand-primary transition-colors hover:bg-brand-primary/10">View Archive</button>
-                </div>
-            </section>
-
-            <section id="dashboard-metrics" class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
-                <!-- Metrics injected here -->
-            </section>
+    <!-- ==================== GALLERY VIEW ==================== -->
+    <div id="gallery-view" class="hidden min-h-screen flex-col pt-20 md:pl-72">
+        <main class="mx-auto max-w-6xl p-8 w-full">
+            <div class="mb-10 border-b border-white/5 pb-8">
+                <p class="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-brand-primary">Technical Output</p>
+                <h1 class="text-3xl font-extrabold tracking-tight text-ui-text">Segmentation Mask Gallery</h1>
+                <p class="mt-2 text-ui-muted max-w-2xl">Compare original UAV imagery with AI-generated segmentation masks using the interactive slider.</p>
+            </div>
+            <div id="gallery-content" class="space-y-10">
+                <!-- Gallery items injected here -->
+            </div>
         </main>
     </div>
 
-    <!-- Mobile Navigation -->
-    <nav class="fixed bottom-0 z-50 flex w-full items-center justify-around glass-nav px-6 py-4 md:hidden">
-        <button class="flex flex-col items-center gap-1 text-brand-primary" onclick="switchView('analysis')"><span class="icon-custom h-5 w-5" style="--icon:url('assets/icons/cloud-rain-wind.svg');"></span><span class="text-[10px] font-bold">Analysis</span></button>
-        <button class="flex flex-col items-center gap-1 text-ui-muted" onclick="switchView('dashboard')"><span class="icon-custom h-5 w-5" style="--icon:url('assets/icons/waves.svg');"></span><span class="text-[10px] font-bold">Portal</span></button>
-        <button class="flex flex-col items-center gap-1 text-ui-muted"><span class="icon-custom h-5 w-5" style="--icon:url('assets/icons/terminal.svg');"></span><span class="text-[10px] font-bold">History</span></button>
-        <button class="flex flex-col items-center gap-1 text-ui-muted"><span class="icon-custom h-5 w-5" style="--icon:url('assets/icons/activity.svg');"></span><span class="text-[10px] font-bold">Profile</span></button>
-    </nav>
-
-    <footer class="flex flex-col items-center justify-between gap-4 border-t border-slate-200/10 glass-sidebar px-12 py-8 md:flex-row md:pl-72">
-        <div><span class="font-bold text-brand-primary">FloodGuard AI</span><span class="mx-3 text-ui-muted">|</span><span class="text-xs uppercase tracking-widest text-ui-muted">© 2024 FloodGuard AI. Ethereal Safety Systems.</span></div>
-        <div class="flex flex-wrap gap-6">
-            <a class="text-xs uppercase tracking-widest text-ui-muted transition-opacity duration-300 hover:text-brand-primary" href="#">Privacy Policy</a>
-            <a class="text-xs uppercase tracking-widest text-ui-muted transition-opacity duration-300 hover:text-brand-primary" href="#">Terms of Service</a>
+    <!-- Footer -->
+    <footer class="flex flex-col items-center justify-between gap-6 border-t border-white/5 bg-white/2 p-8 md:flex-row md:pl-[300px]">
+        <div>
+            <span class="text-lg font-black tracking-tighter text-brand-primary">FloodWiz</span>
+            <span class="mx-4 text-ui-muted/20">|</span>
+            <span class="text-[10px] font-bold uppercase tracking-[0.2em] text-ui-muted">Neural Safety Analytics © 2025</span>
         </div>
     </footer>
 
     <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
     <script src="script.js"></script>
+    <script>
+        // Khởi tạo icons ngay khi trang load xong hoặc Lucide load xong
+        window.addEventListener('load', () => {
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            }
+        });
+    </script>
 </body>
 </html>

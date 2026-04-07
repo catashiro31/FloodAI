@@ -6,6 +6,7 @@ import { ConversationModule } from "./conversation/conversation.module";
 import { OrchestrationModule } from "./orchestration/orchestration.module";
 import { RealtimeModule } from "./realtime/realtime.module";
 import { TasksModule } from "./tasks/tasks.module";
+import { VlmModule } from "./vlm/vlm.module";
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { TasksModule } from "./tasks/tasks.module";
     OrchestrationModule,
     ChatModule,
     RealtimeModule,
+    VlmModule,
   ],
   controllers: [],
   providers: [],

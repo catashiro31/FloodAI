@@ -16,6 +16,9 @@ export class SegmentationCallbackDto {
   mask_url?: string;
 
   @IsOptional()
+  metrics?: Record<string, any>;
+
+  @IsOptional()
   @IsString()
   error_code?: string;
 

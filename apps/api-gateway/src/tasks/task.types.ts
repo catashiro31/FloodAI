@@ -7,6 +7,7 @@ export interface TaskRecord {
   status: TaskStatus;
   question?: string | null;
   mask_all_overlay?: string | null;
+  metrics?: Record<string, any> | null;
   vlm_analysis?: string | null;
   error_code?: string | null;
   error_message?: string | null;

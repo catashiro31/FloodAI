@@ -58,13 +58,18 @@ export class TasksService {
     return this.repository.getTask(jobId);
   }
 
+  async getTasksBySession(sessionId: string) {
+    return this.repository.getTasksBySession(sessionId);
+  }
+
   async setSegmentationProcessing(jobId: string) {
     return this.transition(jobId, TaskStatus.ProcessingSegmentation);
   }
 
-  async setSegmentationSuccess(jobId: string, maskAllOverlay?: string | null) {
+  async setSegmentationSuccess(jobId: string, maskAllOverlay?: string | null, metrics?: Record<string, any>) {
     return this.transition(jobId, TaskStatus.SuccessSegmentation, {
       mask_all_overlay: maskAllOverlay || null,
+      metrics: metrics || null,
       segmentation_callback_at: new Date(),
     });
   }

@@ -31,6 +31,9 @@ export class Task {
   @Column("text", { nullable: true })
   mask_all_overlay: string;
 
+  @Column("jsonb", { nullable: true, default: {} })
+  metrics: Record<string, any>;
+
   @Column("text", { nullable: true })
   vlm_analysis: string;
 

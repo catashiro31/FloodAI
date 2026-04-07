@@ -15,4 +15,3 @@ python-dotenv
 pydantic
 pyngrok
 nest-asyncio
-supabase

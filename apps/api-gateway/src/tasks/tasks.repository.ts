@@ -41,6 +41,13 @@ export class TasksRepository {
     return this.sessionRepository.findOne({ where: { session_id: sessionId } });
   }
 
+  async getTasksBySession(sessionId: string): Promise<Task[]> {
+    return this.taskRepository.find({
+      where: { session_id: sessionId },
+      order: { created_at: "DESC" },
+    });
+  }
+
   async listSessions(limit = 50): Promise<Session[]> {
     const cappedLimit = Math.min(Math.max(limit, 1), 200);
     return this.sessionRepository.find({
