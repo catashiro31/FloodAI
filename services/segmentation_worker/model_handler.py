@@ -10,7 +10,7 @@ from file_handler import get_filename_from_url
 from db_handler import TABLE_NAME, get_data, update_data, upload_image_to_bucket
 
 MODEL_WEIGHT = r"f:\Nghiên cứu khoa học\Segmentation\FloodAI\model\best_ssl_model.pth"
-important_class = [1, 3]
+important_class = list(range(1, 10))
 
 job_status: Dict[str, dict] = {}
 
@@ -141,6 +141,7 @@ def run_segmentation_task(
         
         result = predictor.visualize_all(temp_path, important_class, progress_callback=on_progress)
         overlay_content = result.get("mask_all_overlay")
+        pure_content = result.get("mask_pure")
         metrics = result.get("metrics", {})
         if not overlay_content:
             error_message = "Segmentation output missing mask_all_overlay"
@@ -161,16 +162,28 @@ def run_segmentation_task(
 
         # Lưu mask cục bộ thay vì upload Cloudinary
         import base64 as b64mod
-        mask_filename = f"{job_id}_mask_all_overlay.png"
         masks_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "apps", "api-gateway", "uploads", "masks")
         os.makedirs(masks_dir, exist_ok=True)
-        mask_path = os.path.join(masks_dir, mask_filename)
         
+        # Lưu mask overlay
+        mask_filename = f"{job_id}_mask_all_overlay.png"
+        mask_path = os.path.join(masks_dir, mask_filename)
         mask_bytes = b64mod.b64decode(overlay_content)
         with open(mask_path, "wb") as f:
             f.write(mask_bytes)
-        
         mask_all_overlay_url = f"/static/masks/{mask_filename}"
+        
+        # Lưu mask pure
+        pure_mask_url = ""
+        if pure_content:
+            pure_filename = f"{job_id}_mask_pure.png"
+            pure_path = os.path.join(masks_dir, pure_filename)
+            pure_bytes = b64mod.b64decode(pure_content)
+            with open(pure_path, "wb") as f:
+                f.write(pure_bytes)
+            pure_mask_url = f"/static/masks/{pure_filename}"
+            print(f"✅ Pure Mask saved locally: {pure_path}")
+
         print(f"✅ Mask saved locally: {mask_path}")
 
         update_data("mask_all_overlay", mask_all_overlay_url, TABLE_NAME, "job_id", job_id)
@@ -185,6 +198,7 @@ def run_segmentation_task(
         job_status[job_id].update({
             "status": "success_segmentation",
             "mask_all_overlay": mask_all_overlay_url,
+            "mask_pure": pure_mask_url,
             "metrics": metrics,
             "end_time": time.time(),
             "duration": time.time() - job_status[job_id]["start_time"]
@@ -195,6 +209,7 @@ def run_segmentation_task(
                 "job_id": job_id,
                 "status": "success_segmentation",
                 "mask_all_overlay": mask_all_overlay_url,
+                "mask_pure": pure_mask_url,
                 "mask_url": mask_all_overlay_url,
                 "metrics": metrics,
             },

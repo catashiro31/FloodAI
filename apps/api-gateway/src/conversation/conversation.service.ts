@@ -17,6 +17,7 @@ export class ConversationService {
   async ensureSession(
     sessionId: string,
     initialQuestion?: string,
+    imageUrls?: string[],
   ) {
     const existing = await this.repository.getSession(sessionId);
 
@@ -25,7 +26,7 @@ export class ConversationService {
     }
 
     const history = initialQuestion
-      ? [this.createHistoryItem("user", initialQuestion)]
+      ? [this.createHistoryItem("user", initialQuestion, imageUrls)]
       : [];
 
     return this.repository.upsertSession({
@@ -44,10 +45,14 @@ export class ConversationService {
     jobId: string,
     message: string,
     reset = false,
+    imageUrls?: string[],
   ) {
     const session = await this.repository.getSession(sessionId);
     const history = reset ? [] : session?.history || [];
-    const nextHistory = [...history, this.createHistoryItem("user", message)];
+    const nextHistory = [
+      ...history,
+      this.createHistoryItem("user", message, imageUrls),
+    ];
 
     return this.repository.upsertSession({
       session_id: sessionId,
@@ -67,6 +72,7 @@ export class ConversationService {
     reply: string,
     context?: Record<string, unknown>,
     history?: SessionHistoryItem[],
+    imageUrls?: string[],
   ) {
     const session = await this.repository.getSession(sessionId);
     const nextHistory =
@@ -74,7 +80,7 @@ export class ConversationService {
         ? history
         : [
             ...(session?.history || []),
-            this.createHistoryItem("assistant", reply),
+            this.createHistoryItem("assistant", reply, imageUrls),
           ];
 
     const nextContext = {
@@ -95,11 +101,13 @@ export class ConversationService {
   private createHistoryItem(
     role: SessionHistoryItem["role"],
     content: string,
+    imageUrls?: string[],
   ): SessionHistoryItem {
     return {
       role,
       content,
       createdAt: new Date().toISOString(),
+      imageUrls: imageUrls || [],
     };
   }
 }

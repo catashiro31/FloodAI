@@ -47,17 +47,23 @@ export class ChatService {
     const effectiveSessionId =
       sessionId || body.sessionId || crypto.randomUUID();
 
-    // Để tránh lỗi khóa ngoại (FK constraint), ta phải tạo session trước khi tạo task
-    await this.conversationService.ensureSession(
-      effectiveSessionId,
-      body.question,
-    );
+    // Tạo session trước để thỏa mãn ràng buộc khóa ngoại (không kèm câu hỏi để tránh lặp)
+    await this.conversationService.ensureSession(effectiveSessionId);
 
     const task = await this.tasksService.createTaskFromUpload({
       file,
       sessionId: effectiveSessionId,
       question: body.question,
     });
+
+    // Ghi lại tin nhắn của người dùng kèm với ảnh đã được upload thành công
+    await this.conversationService.recordUserMessage(
+      effectiveSessionId,
+      task.job_id,
+      body.question || "Phân tích ảnh này",
+      false,
+      [task.image_url],
+    );
     this.realtimeService.registerSessionClient(effectiveSessionId, clientId);
     this.realtimeService.registerTaskClient(task.job_id, clientId);
     this.realtimeService.registerTaskSession(task.job_id, effectiveSessionId);
@@ -233,6 +239,7 @@ export class ChatService {
       reply,
       body.context,
       body.history,
+      task.mask_all_overlay ? [task.mask_all_overlay] : [],
     );
 
     this.realtimeService.sendReply(

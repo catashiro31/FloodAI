@@ -12,7 +12,8 @@ export class VlmCallbackDto {
   job_id: string;
 
   @IsUUID()
-  session_id: string;
+  @IsOptional()
+  session_id?: string;
 
   @IsString()
   status: string;

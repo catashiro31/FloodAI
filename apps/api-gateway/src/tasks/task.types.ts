@@ -21,6 +21,7 @@ export interface SessionHistoryItem {
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+  imageUrls?: string[];
 }
 
 export interface SessionRecord {

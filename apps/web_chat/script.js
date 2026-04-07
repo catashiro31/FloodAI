@@ -84,9 +84,13 @@ socket.on('uploadStatus', (data) => {
             renderMetricsPanel(currentMetrics);
         }
         if (data.details?.maskAllOverlay && lastBotMsg) {
-            lastBotMsg.imageUrls = [resolveImageUrl(data.details.maskAllOverlay)];
+            // Thay mask overlay thành mask pure (full mask) cho giao diện chat
+            const pureMaskUrl = data.details.maskPure 
+                ? resolveImageUrl(data.details.maskPure) 
+                : resolveImageUrl(data.details.maskAllOverlay).replace('_mask_all_overlay', '_mask_pure');
+            lastBotMsg.imageUrls = [pureMaskUrl];
         }
-        if (lastBotMsg) lastBotMsg.text = '✅ Phân đoạn hoàn tất! Ảnh mask đã được tạo.';
+        if (lastBotMsg) lastBotMsg.text = '✅ Phân đoạn hoàn tất! Mask dự đoán đầy đủ tất cả class đang được hiển thị.';
         unlockChat();
         renderAnalysisMessages(true);
         return;
@@ -293,8 +297,8 @@ async function loadSessionHistory(id) {
             const dbSession = data.session;
             if (dbSession && dbSession.history && dbSession.history.length > 0) {
                 analysisMessages = dbSession.history.map((h, i) => {
-                    let urls = h.imageUrls || [];
-                    // Đảm bảo resolve tất cả ảnh trong lịch sử
+                    // Ưu tiên imageUrls (mảng), fallback về imageUrl (chuỗi đơn) nếu là dữ liệu cũ
+                    let urls = h.imageUrls || (h.imageUrl ? [h.imageUrl] : []);
                     urls = urls.map(resolveImageUrl);
 
                     return {
@@ -315,7 +319,7 @@ async function loadSessionHistory(id) {
             renderAnalysisMessages(true);
         }
 
-        // Load tasks for this session to get metrics + mask
+        // Load tasks for this session to get metrics
         const taskRes = await fetch(`${BACKEND_URL}/chat/tasks/${id}`);
         if (taskRes.ok) {
             const taskData = await taskRes.json();
@@ -325,28 +329,16 @@ async function loadSessionHistory(id) {
                 currentJobId = latestTask.job_id || latestTask.jobId;
                 localStorage.setItem('current_job_id', currentJobId);
 
-                // Quan trọng: Nếu chỉ load lại trang, ta vẫn để sessionHasImage = true 
-                // để cho phép chat, nhưng nút upload sẽ không bị khóa cứng nữa.
                 sessionHasImage = true;
 
                 if (latestTask.metrics) {
                     currentMetrics = latestTask.metrics;
                     renderMetricsPanel(currentMetrics);
-                    showExportButton();
                 }
 
-                // Cập nhật ảnh mask cho tin nhắn cuối nếu có
-                const maskUrl = latestTask.mask_all_overlay || latestTask.maskAllOverlay;
-                if (maskUrl) {
-                    const lastBotMsg = [...analysisMessages].reverse().find(m => m.sender === 'bot');
-                    if (lastBotMsg && lastBotMsg.imageUrls.length === 0) {
-                        lastBotMsg.imageUrls = [resolveImageUrl(maskUrl)];
-                        renderAnalysisMessages(true);
-                    }
-                }
+                // Không cần "patching" mask thủ công ở đây nữa vì đã được lưu trong history bền vững.
+                // Điều này giúp hiển thị đúng TẤT CẢ các ảnh/mask trong lịch sử kể cả khi có nhiều lần analyze.
 
-                // Luôn unlock chat khi load lại trang để tránh bị kẹt 
-                // (Server sẽ vẫn gửi update qua socket nếu đang chạy)
                 unlockChat();
                 updateUploadButton();
             } else {
@@ -439,13 +431,26 @@ async function renderGalleryForSession(sid) {
             const metricsHtml = task.metrics ? buildMetricsBadgesHtml(task.metrics) : '';
             return `
                 <div class="glass-card rounded-2xl overflow-hidden animate-slide-up" style="animation-delay: ${idx * 100}ms">
+                    <!-- Legend -->
+                    <div class="p-3 bg-black/20 text-[10px] sm:text-xs flex flex-wrap gap-2 justify-center border-b border-white/5">
+                        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm" style="background: rgb(220, 20, 60)"></span> Nhà ngập</span>
+                        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm" style="background: rgb(197, 235, 19)"></span> Nhà</span>
+                        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm" style="background: rgb(128, 64, 128)"></span> Đường ngập</span>
+                        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm" style="background: rgb(105, 105, 105)"></span> Đường</span>
+                        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm" style="background: rgb(0, 191, 255)"></span> Nước</span>
+                        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm" style="background: rgb(34, 139, 34)"></span> Cây cỏ</span>
+                        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm" style="background: rgb(255, 165, 0)"></span> Phương tiện</span>
+                        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm" style="background: rgb(0, 128, 128)"></span> Hồ bơi</span>
+                        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm" style="background: rgb(124, 252, 0)"></span> Cỏ</span>
+                    </div>
                     <!-- Comparison Slider -->
                     <div class="comparison-slider" data-idx="${idx}">
                         <div class="comparison-container relative overflow-hidden" style="aspect-ratio: 16/10">
-                            <img class="comparison-img-bottom absolute inset-0 w-full h-full object-cover" src="${resolveImageUrl(task.mask_all_overlay || task.maskAllOverlay)}" alt="Mask overlay" />
-                            <div class="comparison-img-top-wrapper absolute inset-0 overflow-hidden" style="width: 50%">
-                                <img class="comparison-img-top w-full h-full object-cover" src="${resolveImageUrl(task.image_url || task.imageUrl)}" alt="Original" style="width: calc(200%); max-width: none;" />
-                            </div>
+                            <!-- Base layer (Original Image) -->
+                            <img class="comparison-img-bottom absolute inset-0 w-full h-full object-cover" src="${resolveImageUrl(task.image_url || task.imageUrl)}" alt="Original" />
+                            
+                            <!-- Overlay layer (Mask with 70% alpha) -->
+                            <img class="comparison-img-top absolute inset-0 w-full h-full object-cover" src="${resolveImageUrl(task.mask_all_overlay || task.maskAllOverlay)}" alt="Mask overlay" style="clip-path: inset(0 50% 0 0)" />
                             <div class="comparison-handle absolute top-0 bottom-0 flex items-center justify-center cursor-ew-resize z-10" style="left: 50%; transform: translateX(-50%)">
                                 <div class="w-1 h-full bg-white/80 shadow-xl"></div>
                                 <div class="absolute w-10 h-10 rounded-full bg-white/20 backdrop-blur-md border-2 border-white/60 flex items-center justify-center shadow-2xl">
@@ -500,8 +505,8 @@ function initComparisonSliders() {
     document.querySelectorAll('.comparison-slider').forEach(slider => {
         const container = slider.querySelector('.comparison-container');
         const handle = slider.querySelector('.comparison-handle');
-        const topWrapper = slider.querySelector('.comparison-img-top-wrapper');
-        if (!container || !handle || !topWrapper) return;
+        const topImg = slider.querySelector('.comparison-img-top');
+        if (!container || !handle || !topImg) return;
 
         let isDragging = false;
 
@@ -510,7 +515,15 @@ function initComparisonSliders() {
             let x = clientX - rect.left;
             x = Math.max(0, Math.min(x, rect.width));
             const percent = (x / rect.width) * 100;
-            topWrapper.style.width = `${percent}%`;
+            
+            // Xử lý clip layer trên (mask)
+            const topImg = container.querySelector('.comparison-img-top');
+            if (topImg) {
+                // Hiển thị phần bên TRÁI của ảnh mask, nội dung từ 0 -> percent%
+                // clip-path: inset(0 100-percent% 0 0) - cắt phần bên PHẢI đi
+                topImg.style.clipPath = `inset(0 ${100 - percent}% 0 0)`;
+            }
+            
             handle.style.left = `${percent}%`;
         }
 
@@ -523,6 +536,17 @@ function initComparisonSliders() {
         container.addEventListener('touchstart', (e) => { isDragging = true; updateSlider(e.touches[0].clientX); });
         window.addEventListener('touchend', () => { isDragging = false; });
         window.addEventListener('touchmove', (e) => { if (isDragging) updateSlider(e.touches[0].clientX); });
+        // Khởi tạo vị trí 50% ban đầu
+        const rect = container.getBoundingClientRect();
+        if (rect.width > 0) {
+            updateSlider(rect.left + rect.width / 2);
+        } else {
+            // Fallback nếu chưa render xong
+            setTimeout(() => {
+                const r = container.getBoundingClientRect();
+                updateSlider(r.left + r.width / 2);
+            }, 100);
+        }
     });
 }
 

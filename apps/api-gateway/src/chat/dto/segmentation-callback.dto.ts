@@ -13,6 +13,10 @@ export class SegmentationCallbackDto {
 
   @IsOptional()
   @IsString()
+  mask_pure?: string;
+
+  @IsOptional()
+  @IsString()
   mask_url?: string;
 
   @IsOptional()

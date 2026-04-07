@@ -181,6 +181,7 @@ export class OrchestrationService {
       this.logger.error(`Local VLM execution failed: ${error.message}`);
       await axios.post(this.buildCallbackUrl("/chat/webhook/vlm"), {
         job_id: task.job_id,
+        session_id: task.session_id,
         status: "error",
         error_message: error.message,
       });

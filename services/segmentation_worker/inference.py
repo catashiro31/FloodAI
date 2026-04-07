@@ -210,14 +210,20 @@ class ComprehensiveVisualizer:
 
         result = {}
         class_colors = {
-          1: [255, 0, 0],      # đỏ - Building Flooded
-          5: [0, 255, 0],      # xanh lá - Water
-          3: [0, 0, 255],      # xanh dương - Road Flooded
-          2: [255, 255, 0],    # vàng - Building Non-Flooded
+            1: [220, 20, 60],       # Building-flooded
+            2: [197, 235, 19],      # Building-non-flooded
+            3: [128, 64, 128],      # Road-flooded
+            4: [105, 105, 105],     # Road-non-flooded
+            5: [0, 191, 255],       # Water
+            6: [34, 139, 34],       # Tree
+            7: [255, 165, 0],       # Vehicle
+            8: [0, 128, 128],       # Pool
+            9: [124, 252, 0]        # Grass
         }
   
         overlay_img = cv2.cvtColor(orig_img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-        alpha = 0.8
+        pure_mask_img = np.zeros_like(overlay_img) # Nền đen cho pure mask
+        alpha = 0.7
         
         # Vectorized Overlay Generation
         for c_idx in segmentation_class:
@@ -226,10 +232,10 @@ class ComprehensiveVisualizer:
             mask = (prob_map_orig[c_idx] > 0.8)
             color = np.array(class_colors[c_idx], dtype=np.float32) / 255.0
             
-            # overlay_img[mask] = (1 - alpha) * overlay_img[mask] + alpha * color
-            # Optimize: apply alpha blending only to pixels where mask is true
+            pure_mask_img[mask] = color
             overlay_img[mask] = overlay_img[mask] * (1 - alpha) + color * alpha
 
+        result["mask_pure"] = ndarray_to_base64(pure_mask_img, image_format=".png")
         result["mask_all_overlay"] = ndarray_to_base64(overlay_img, image_format=".png")
 
         # Tính metrics
