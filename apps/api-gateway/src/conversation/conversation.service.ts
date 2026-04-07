@@ -31,7 +31,6 @@ export class ConversationService {
 
     return this.repository.upsertSession({
       session_id: sessionId,
-      job_id: jobId,
       context: {
         initialQuestion: initialQuestion?.trim() || null,
       },
@@ -53,7 +52,6 @@ export class ConversationService {
 
     return this.repository.upsertSession({
       session_id: sessionId,
-      job_id: jobId,
       context: {
         ...(session?.context || {}),
         reset,
@@ -88,7 +86,6 @@ export class ConversationService {
 
     return this.repository.upsertSession({
       session_id: sessionId,
-      job_id: jobId,
       context: nextContext,
       history: nextHistory,
       last_question: session?.last_question || null,

@@ -263,7 +263,6 @@ export class ChatService {
     const sessions = await this.conversationService.listSessions(limit);
     return sessions.map((session) => ({
       sessionId: session.session_id,
-      jobId: session.job_id,
       lastQuestion: session.last_question || null,
       lastReply: session.last_reply || null,
       updatedAt: session.updated_at || null,

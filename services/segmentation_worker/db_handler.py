@@ -1,69 +1,103 @@
 import os
-import base64
 import tempfile
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import cloudinary
+import cloudinary.uploader
 from typing import Any, Optional
-
-from supabase import Client, create_client
 from dotenv import load_dotenv
 
 from file_handler import convert_base64_2_bytes
 
 load_dotenv()
 
-DB_URL = os.getenv("SUPABASE_URL")
-DB_KEY = os.getenv("SUPABASE_KEY")
-BUCKET_NAME = os.getenv("SUPABASE_BUCKET_NAME", "masks")
-TABLE_NAME = os.getenv("SUPABASE_TABLE_NAME", "tasks")
+# Database Config
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "31102006")
+DB_NAME = os.getenv("DB_NAME", "floodai")
+TABLE_NAME = "tasks"
 
-supabase: Optional[Client] = None
-if DB_URL and DB_KEY:
-    supabase = create_client(DB_URL, DB_KEY)
+# Cloudinary Config
+cloudinary.config(
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+    secure=True
+)
+
+def get_db_connection():
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        dbname=DB_NAME
+    )
 
 def get_data(job_id: str):
-    if not supabase:
+    try:
+        conn = get_db_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"SELECT image_url FROM {TABLE_NAME} WHERE job_id = %s", (job_id,))
+            result = cur.fetchone()
+            return [result] if result else []
+    except Exception as e:
+        print(f"❌ Lỗi khi truy vấn database: {e}")
         return []
-    response = supabase.table(TABLE_NAME).select("image_url").eq("job_id", job_id).execute()
-    return response.data or []
+    finally:
+        if 'conn' in locals():
+            conn.close()
     
 def update_data(col: str, value: Any, table_name: str, query_col: str, query_value: str):
-    if not supabase:
-        return
     try:
-        data = {col : value}
-        response = supabase.table(table_name).update(data).eq(query_col, query_value).execute()
-        
-        if len(response.data) > 0:
-            print(f"✅ Đã cập nhật thành công cho {query_col}: {query_value}")
-        else:
-            print(f"⚠️ Không tìm thấy hàng nào ở {query_col} có : {query_value}")
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            query = f"UPDATE {table_name} SET {col} = %s, updated_at = NOW() WHERE {query_col} = %s"
+            cur.execute(query, (value, query_value))
+            conn.commit()
+            if cur.rowcount > 0:
+                print(f"✅ Đã cập nhật thành công cho {query_col}: {query_value}")
+            else:
+                print(f"⚠️ Không tìm thấy hàng nào ở {query_col} có : {query_value}")
     except Exception as e:
         print(f"❌ Lỗi khi cập nhật database: {e}")
+    finally:
+        if 'conn' in locals():
+            conn.close()
 
-def upload_image_to_bucket(image_name: str, image_content: base64, bucket_name: str):
+def upload_image_to_bucket(image_name: str, image_content: Any, bucket_name: str = None):
+    """
+    Uploads base64 image content to Cloudinary.
+    image_content can be a base64 string or bytes.
+    """
     temp_path = None
-    if not supabase:
-        print("⚠️ Supabase credentials missing. Skipping upload.")
-        return None
-    
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-        tmpfile.write(convert_base64_2_bytes(image_content))
-        temp_path = tmpfile.name
-
     try:
-        with open(temp_path, "rb") as f:
-            supabase.storage.from_(bucket_name).upload(
-                path = image_name, 
-                file = f, 
-                file_options = {
-                    "content-type": "image/png",
-                    "upsert": "true",
-                }
-            )
+        # Prepare content
+        if isinstance(image_content, str):
+            image_bytes = convert_base64_2_bytes(image_content)
+        else:
+            image_bytes = image_content
 
-            url = supabase.storage.from_(bucket_name).get_public_url(image_name)
-            return url
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
+            tmpfile.write(image_bytes)
+            temp_path = tmpfile.name
+
+        # Upload to Cloudinary
+        upload_result = cloudinary.uploader.upload(
+            temp_path,
+            public_id=image_name.split('.')[0],
+            folder="floodai/masks",
+            resource_type="image",
+            overwrite=True
+        )
+
+        return upload_result.get("secure_url")
+
     except Exception as e:
-        print(f"❌ Failed to upload to Supabase: {e}")
+        print(f"❌ Failed to upload to Cloudinary: {e}")
+        return None
     finally:
         if temp_path and os.path.exists(temp_path):
             try:

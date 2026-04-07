@@ -10,10 +10,10 @@ export interface TaskRecord {
   vlm_analysis?: string | null;
   error_code?: string | null;
   error_message?: string | null;
-  segmentation_callback_at?: string | null;
-  vlm_callback_at?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
+  segmentation_callback_at?: Date | string | null;
+  vlm_callback_at?: Date | string | null;
+  created_at?: Date | string | null;
+  updated_at?: Date | string | null;
 }
 
 export interface SessionHistoryItem {

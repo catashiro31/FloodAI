@@ -1,9 +1,9 @@
 import { ConflictException, Injectable, Logger } from "@nestjs/common";
 import * as crypto from "crypto";
 import { TaskStatus, canTransitionStatus } from "../common/task-status";
-import { SharedSupabaseService } from "../shared/supabase/supabase.service";
+import { CloudinaryService } from "../shared/storage/cloudinary.service";
 import { TasksRepository } from "./tasks.repository";
-import { TaskRecord } from "./task.types";
+import { Task } from "./entities/task.entity";
 
 interface CreateTaskInput {
   file: Express.Multer.File;
@@ -17,7 +17,7 @@ export class TasksService {
 
   constructor(
     private readonly repository: TasksRepository,
-    private readonly supabaseService: SharedSupabaseService,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   async createTaskFromUpload(input: CreateTaskInput) {
@@ -29,32 +29,29 @@ export class TasksService {
     const fileExtension = this.resolveFileExtension(input.file.mimetype);
     const fileName = `${fileHash}.${fileExtension}`;
 
-    const existingFiles = await this.supabaseService.findFile(fileName);
-
-    if (!existingFiles.length) {
-      await this.supabaseService.uploadFile(
-        fileName,
-        input.file.buffer,
-        input.file.mimetype || "image/png",
-      );
+    // Search for existing file on Cloudinary
+    const existingFiles = await this.cloudinaryService.findFile(fileName);
+    
+    let imageUrl: string;
+    if (existingFiles.length > 0) {
+      imageUrl = existingFiles[0].secure_url;
+    } else {
+      const uploadResult = await this.cloudinaryService.uploadFile(input.file.buffer, fileName);
+      imageUrl = uploadResult.secure_url;
     }
 
-    const imageUrl = this.supabaseService.getPublicUrl(fileName);
-    const now = new Date().toISOString();
-    const task: TaskRecord = {
+    const task: Partial<Task> = {
       job_id: jobId,
       session_id: input.sessionId,
       image_url: imageUrl,
       status: TaskStatus.Queued,
       question: input.question?.trim() || null,
-      created_at: now,
-      updated_at: now,
     };
 
-    await this.repository.createTask(task);
+    const savedTask = await this.repository.createTask(task);
     this.logger.log(`Created task ${jobId} for session ${input.sessionId}`);
 
-    return task;
+    return savedTask;
   }
 
   async getTask(jobId: string) {
@@ -68,17 +65,13 @@ export class TasksService {
   async setSegmentationSuccess(jobId: string, maskAllOverlay?: string | null) {
     return this.transition(jobId, TaskStatus.SuccessSegmentation, {
       mask_all_overlay: maskAllOverlay || null,
-      segmentation_callback_at: new Date().toISOString(),
-      error_code: null,
-      error_message: null,
+      segmentation_callback_at: new Date(),
     });
   }
 
   async setVlmProcessing(jobId: string, question?: string) {
     return this.transition(jobId, TaskStatus.ProcessingVlm, {
       question: question?.trim() || null,
-      error_code: null,
-      error_message: null,
     });
   }
 
@@ -86,9 +79,7 @@ export class TasksService {
     return this.transition(jobId, TaskStatus.SuccessVlm, {
       vlm_analysis: reply,
       session_id: sessionId,
-      vlm_callback_at: new Date().toISOString(),
-      error_code: null,
-      error_message: null,
+      vlm_callback_at: new Date(),
     });
   }
 
@@ -111,15 +102,17 @@ export class TasksService {
   private async transition(
     jobId: string,
     nextStatus: TaskStatus,
-    patch: Partial<TaskRecord> = {},
+    patch: Partial<Task> = {},
   ) {
-    const task = await this.repository.getTask(jobId);
+    const task = await this.getTask(jobId);
 
     if (task.status === nextStatus) {
       return task;
     }
 
-    if (!canTransitionStatus(task.status, nextStatus)) {
+    // Since canTransitionStatus might expect the old string status, we might need a cast if the types differ slightly
+    // but here we are using the TaskStatus enum which should be compatible.
+    if (!canTransitionStatus(task.status as any, nextStatus as any)) {
       throw new ConflictException(
         `Invalid task transition ${task.status} -> ${nextStatus} for ${jobId}`,
       );

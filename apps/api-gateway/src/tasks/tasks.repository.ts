@@ -1,108 +1,51 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { SharedSupabaseService } from "../shared/supabase/supabase.service";
-import { SessionRecord, TaskRecord } from "./task.types";
+import { InjectRepository } from "@nestjs/typeorm";
+import { Repository } from "typeorm";
+import { Task, TaskStatus } from "./entities/task.entity";
+import { Session } from "./entities/session.entity";
 
 @Injectable()
 export class TasksRepository {
-  constructor(private readonly supabaseService: SharedSupabaseService) {}
+  constructor(
+    @InjectRepository(Task)
+    private readonly taskRepository: Repository<Task>,
+    @InjectRepository(Session)
+    private readonly sessionRepository: Repository<Session>,
+  ) {}
 
-  async createTask(task: TaskRecord) {
-    const { error } = await this.supabaseService
-      .getClient()
-      .from(this.supabaseService.getTasksTableName())
-      .insert(task);
+  async createTask(task: Partial<Task>) {
+    const newTask = this.taskRepository.create(task);
+    return this.taskRepository.save(newTask);
+  }
 
-    if (error) {
-      throw error;
+  async getTask(jobId: string): Promise<Task> {
+    const task = await this.taskRepository.findOne({ where: { job_id: jobId } });
+    if (!task) {
+      throw new NotFoundException(`Task ${jobId} not found`);
     }
-
     return task;
   }
 
-  async getTask(jobId: string): Promise<TaskRecord> {
-    const { data, error } = await this.supabaseService
-      .getClient()
-      .from(this.supabaseService.getTasksTableName())
-      .select("*")
-      .eq("job_id", jobId)
-      .single();
-
-    if (error || !data) {
-      throw new NotFoundException(`Task ${jobId} not found`);
-    }
-
-    return data as TaskRecord;
+  async updateTask(jobId: string, patch: Partial<Task>) {
+    await this.taskRepository.update(jobId, patch);
+    return this.getTask(jobId);
   }
 
-  async updateTask(jobId: string, patch: Partial<TaskRecord>) {
-    const payload = {
-      ...patch,
-      updated_at: new Date().toISOString(),
-    };
-
-    const { data, error } = await this.supabaseService
-      .getClient()
-      .from(this.supabaseService.getTasksTableName())
-      .update(payload)
-      .eq("job_id", jobId)
-      .select("*")
-      .single();
-
-    if (error || !data) {
-      throw error ?? new NotFoundException(`Task ${jobId} not found`);
-    }
-
-    return data as TaskRecord;
+  async upsertSession(session: Partial<Session>) {
+    // TypeORM doesn't have a direct "upsert" that returns the object easily for all drivers,
+    // so we can use save() which handles upsert based on primary key.
+    return this.sessionRepository.save(session);
   }
 
-  async upsertSession(session: SessionRecord) {
-    const { data, error } = await this.supabaseService
-      .getClient()
-      .from(this.supabaseService.getSessionsTableName())
-      .upsert(session, {
-        onConflict: "session_id",
-      })
-      .select("*")
-      .single();
-
-    if (error || !data) {
-      throw (
-        error ??
-        new NotFoundException(`Session ${session.session_id} not found`)
-      );
-    }
-
-    return data as SessionRecord;
+  async getSession(sessionId: string): Promise<Session | null> {
+    return this.sessionRepository.findOne({ where: { session_id: sessionId } });
   }
 
-  async getSession(sessionId: string): Promise<SessionRecord | null> {
-    const { data, error } = await this.supabaseService
-      .getClient()
-      .from(this.supabaseService.getSessionsTableName())
-      .select("*")
-      .eq("session_id", sessionId)
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-
-    return (data as SessionRecord | null) ?? null;
-  }
-
-  async listSessions(limit = 50): Promise<SessionRecord[]> {
+  async listSessions(limit = 50): Promise<Session[]> {
     const cappedLimit = Math.min(Math.max(limit, 1), 200);
-    const { data, error } = await this.supabaseService
-      .getClient()
-      .from(this.supabaseService.getSessionsTableName())
-      .select("*")
-      .order("updated_at", { ascending: false })
-      .limit(cappedLimit);
-
-    if (error) {
-      throw error;
-    }
-
-    return (data as SessionRecord[]) ?? [];
+    return this.sessionRepository.find({
+      order: { updated_at: "DESC" },
+      take: cappedLimit,
+    });
   }
 }

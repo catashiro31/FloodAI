@@ -6,7 +6,7 @@ const BACKEND_URL =
         ? `${window.location.protocol}//${window.location.hostname}:5000`
         : FALLBACK_BACKEND_URL);
 
-// Initialize Socket.io (Fallback to mock if io is not defined)
+// Initialize Socket.io
 let socket;
 if (typeof io !== 'undefined') {
     socket = io(BACKEND_URL);
@@ -19,6 +19,7 @@ let activeView = 'analysis';
 let currentTheme = localStorage.getItem('theme') || 'light';
 let sessionId = localStorage.getItem('session_id') || "";
 let currentJobId = localStorage.getItem('current_job_id') || "";
+let sessions = [];
 
 if (!sessionId) {
     sessionId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2);
@@ -50,6 +51,7 @@ const analysisPreviewsEl = document.getElementById('analysis-previews');
 const themeToggleEl = document.getElementById('theme-toggle');
 const themeToggleIconEl = document.getElementById('theme-toggle-icon');
 const newSessionBtnEl = document.getElementById('new-session-btn');
+const sessionListEl = document.getElementById('session-list');
 
 // Socket Events
 socket.on('connect', () => {
@@ -60,7 +62,7 @@ socket.on('connect', () => {
 });
 
 socket.on('uploadStatus', (data) => {
-    const lastBotMsg = [...analysisMessages].reverse().find(m => m.sender === 'bot' && (m.text === "Thinking..." || m.text.includes("Digital Cartographer")));
+    const lastBotMsg = [...analysisMessages].reverse().find(m => m.sender === 'bot');
     if (lastBotMsg) {
         lastBotMsg.text = `Neural Analysis: ${data.status}...`;
         renderAnalysisMessages();
@@ -78,26 +80,108 @@ socket.on('receiveMessage', (data) => {
     if (lastBotMsg) {
         lastBotMsg.text = data.reply;
         lastBotMsg.imageUrls = data.imageUrls || [];
-        lastBotMsg.createdAt = data.createdAt;
+        lastBotMsg.createdAt = data.createdAt ? new Date(data.createdAt).getTime() : Date.now();
     } else {
         analysisMessages.push({
             id: Date.now().toString(),
             sender: 'bot',
             text: data.reply,
-            createdAt: data.createdAt,
+            createdAt: data.createdAt ? new Date(data.createdAt).getTime() : Date.now(),
             imageUrls: data.imageUrls || []
         });
     }
     renderAnalysisMessages(true);
+    fetchSessions(); // Refresh session list to show last message
 });
 
 // Functions
+async function fetchSessions() {
+    try {
+        const res = await fetch(`${BACKEND_URL}/chat/sessions?limit=20`);
+        if (res.ok) {
+            const data = await res.json();
+            sessions = data.sessions || [];
+            renderSessionList();
+        }
+    } catch (err) {
+        console.error('Failed to fetch sessions:', err);
+    }
+}
+
+function renderSessionList() {
+    if (!sessionListEl) return;
+    
+    if (sessions.length === 0) {
+        sessionListEl.innerHTML = '<div class="px-3 py-2 text-xs text-ui-muted/40 italic">No recent sessions</div>';
+        return;
+    }
+
+    sessionListEl.innerHTML = sessions.map(s => {
+        const isActive = s.sessionId === sessionId;
+        const lastMsg = s.lastReply || s.lastQuestion || "New conversation";
+        const time = s.updatedAt ? formatRelativeTime(new Date(s.updatedAt).getTime()) : "";
+
+        return `
+            <div onclick="loadSessionHistory('${s.sessionId}')" class="group relative flex flex-col gap-1 rounded-lg px-3 py-2.5 transition-all cursor-pointer ${isActive ? 'bg-brand-primary/10 border-l-2 border-brand-primary' : 'hover:bg-white/5'}">
+                <div class="flex items-center justify-between">
+                    <span class="text-[11px] font-bold tracking-tight ${isActive ? 'text-brand-primary' : 'text-ui-text'} truncate w-32">
+                        ${s.sessionId.substring(0, 8)}...
+                    </span>
+                    <span class="text-[9px] font-medium text-ui-muted opacity-60">${time}</span>
+                </div>
+                <p class="text-[10px] leading-tight text-ui-muted truncate opacity-80 group-hover:opacity-100">
+                    ${lastMsg}
+                </p>
+            </div>
+        `;
+    }).join('');
+}
+
+async function loadSessionHistory(id) {
+    if (!id) return;
+    
+    // Set active session
+    sessionId = id;
+    localStorage.setItem('session_id', id);
+    socket.emit('registerSession', { sessionId });
+    renderSessionList();
+
+    try {
+        const res = await fetch(`${BACKEND_URL}/chat/sessions/${id}`);
+        if (res.ok) {
+            const data = await res.json();
+            const dbSession = data.session;
+            
+            // Map history to analysisMessages
+            if (dbSession && dbSession.history) {
+                analysisMessages = dbSession.history.map((h, i) => ({
+                    id: i.toString(),
+                    sender: h.role === 'user' ? 'user' : 'bot',
+                    text: h.content,
+                    createdAt: h.createdAt ? new Date(h.createdAt).getTime() : Date.now(),
+                    imageUrls: [] // Current schema doesn't store image history per message easily
+                }));
+
+                // If the session has a lastReply and it matches a task, we could potentially fetch more
+                // But for now, we just use the history array.
+                
+                renderAnalysisMessages(true);
+            }
+        }
+    } catch (err) {
+        console.error('Failed to load history:', err);
+    }
+}
+
 function formatRelativeTime(createdAt) {
     const diffMs = Math.max(0, Date.now() - createdAt);
     const diffMinutes = Math.floor(diffMs / 60000);
     if (diffMinutes === 0) return 'Just now';
     if (diffMinutes === 1) return '1 min ago';
-    return `${diffMinutes} mins ago`;
+    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return new Date(createdAt).toLocaleDateString();
 }
 
 function switchView(view) {
@@ -143,6 +227,7 @@ function createNewSession() {
     ];
     clearSelectedFiles();
     renderAnalysisMessages(true);
+    fetchSessions();
 }
 
 function renderAnalysisMessages(scrollToBottom = false) {
@@ -284,7 +369,7 @@ async function handleSendMessage() {
         socket.emit('sendMessage', {
             message: text,
             jobId: currentJobId || undefined,
-            sessionId: currentJobId ? sessionId : undefined
+            sessionId: sessionId
         });
     } else {
         try {
@@ -315,6 +400,7 @@ async function handleSendMessage() {
                     }
                 }
             }
+            fetchSessions();
         } catch (error) {
             console.error('Pipeline error:', error);
         }
@@ -348,7 +434,14 @@ newSessionBtnEl?.addEventListener('click', createNewSession);
 document.addEventListener('DOMContentLoaded', () => {
     applyTheme();
     switchView('analysis');
+    
+    // Load initial data
+    if (sessionId) {
+        loadSessionHistory(sessionId);
+    }
+    fetchSessions();
 });
 
 // Global Scope
 window.switchView = switchView;
+window.loadSessionHistory = loadSessionHistory;

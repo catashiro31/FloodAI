@@ -1,0 +1,215 @@
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var ChatService_1;
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ChatService = void 0;
+const common_1 = require("@nestjs/common");
+const crypto = require("crypto");
+const task_status_1 = require("../common/task-status");
+const conversation_service_1 = require("../conversation/conversation.service");
+const orchestration_service_1 = require("../orchestration/orchestration.service");
+const realtime_service_1 = require("../realtime/realtime.service");
+const tasks_service_1 = require("../tasks/tasks.service");
+let ChatService = ChatService_1 = class ChatService {
+    constructor(tasksService, conversationService, orchestrationService, realtimeService) {
+        this.tasksService = tasksService;
+        this.conversationService = conversationService;
+        this.orchestrationService = orchestrationService;
+        this.realtimeService = realtimeService;
+        this.logger = new common_1.Logger(ChatService_1.name);
+    }
+    async handleHttpMessage(createChatDto) {
+        return this.handleMessage(createChatDto);
+    }
+    async handleRealtimeMessage(createChatDto, clientId) {
+        return this.handleMessage(createChatDto, clientId);
+    }
+    async handleUpload(file, body, clientId, sessionId) {
+        if (!file) {
+            throw new common_1.BadRequestException("file is required");
+        }
+        const effectiveSessionId = sessionId || body.sessionId || crypto.randomUUID();
+        const task = await this.tasksService.createTaskFromUpload({
+            file,
+            sessionId: effectiveSessionId,
+            question: body.question,
+        });
+        await this.conversationService.ensureSession(effectiveSessionId, task.job_id, body.question);
+        this.realtimeService.registerSessionClient(effectiveSessionId, clientId);
+        this.realtimeService.registerTaskClient(task.job_id, clientId);
+        this.realtimeService.registerTaskSession(task.job_id, effectiveSessionId);
+        this.realtimeService.sendStatus(clientId, "Task queued", {
+            jobId: task.job_id,
+            sessionId: effectiveSessionId,
+        }, effectiveSessionId);
+        this.orchestrationService.triggerSegmentation(task, clientId);
+        return {
+            jobId: task.job_id,
+            sessionId: effectiveSessionId,
+            status: task_status_1.TaskStatus.Queued,
+            imageUrl: task.image_url,
+        };
+    }
+    async handleSegmentationWebhook(body) {
+        const existingTask = await this.tasksService.getTask(body.job_id);
+        const clientId = this.realtimeService.getClientIdForTask(body.job_id);
+        const sessionId = existingTask.session_id ||
+            this.realtimeService.getSessionIdForTask(body.job_id);
+        if (body.status === task_status_1.TaskStatus.Error) {
+            if (existingTask.status === task_status_1.TaskStatus.SuccessVlm) {
+                return { status: "duplicate-ignored" };
+            }
+            await this.tasksService.setError(body.job_id, body.error_code || "SEGMENTATION_FAILED", body.error_message || "Segmentation failed");
+            this.realtimeService.sendStatus(clientId, "Segmentation Error", {
+                jobId: body.job_id,
+                error: body.error_message || "Segmentation failed",
+            }, sessionId);
+            return { status: "ok" };
+        }
+        if (existingTask.status === task_status_1.TaskStatus.ProcessingVlm ||
+            existingTask.status === task_status_1.TaskStatus.SuccessVlm) {
+            return { status: "duplicate-ignored" };
+        }
+        const task = await this.tasksService.setSegmentationSuccess(body.job_id, body.mask_all_overlay || body.mask_url || null);
+        this.realtimeService.registerTaskSession(task.job_id, task.session_id);
+        this.realtimeService.sendStatus(clientId, "Segmentation complete", {
+            jobId: body.job_id,
+            maskAllOverlay: task.mask_all_overlay,
+        }, task.session_id);
+        await this.orchestrationService.enqueueVlm(task, "", false, clientId);
+        return { status: "ok" };
+    }
+    async handleVlmWebhook(body) {
+        const existingTask = await this.tasksService.getTask(body.job_id);
+        const clientId = this.realtimeService.getClientIdForTask(body.job_id);
+        const sessionId = body.session_id ||
+            existingTask.session_id ||
+            this.realtimeService.getSessionIdForTask(body.job_id);
+        if (body.status === task_status_1.TaskStatus.Error) {
+            if (existingTask.status === task_status_1.TaskStatus.SuccessVlm) {
+                return { status: "duplicate-ignored" };
+            }
+            await this.tasksService.setError(body.job_id, body.error_code || "VLM_FAILED", body.error_message || "VLM failed");
+            this.realtimeService.sendStatus(clientId, "VLM Error", {
+                jobId: body.job_id,
+                error: body.error_message || "VLM failed",
+            }, sessionId);
+            return { status: "ok" };
+        }
+        const reply = body.reply || "";
+        if (existingTask.status === task_status_1.TaskStatus.SuccessVlm &&
+            existingTask.vlm_analysis === reply) {
+            this.realtimeService.sendReply(clientId, {
+                reply,
+                jobId: existingTask.job_id,
+                imageUrls: existingTask.mask_all_overlay
+                    ? [existingTask.mask_all_overlay]
+                    : [],
+            }, sessionId);
+            this.realtimeService.sendStatus(clientId, "Task Completed", {
+                jobId: existingTask.job_id,
+            }, sessionId);
+            return { status: "replayed" };
+        }
+        const task = await this.tasksService.setVlmSuccess(body.job_id, reply, body.session_id);
+        await this.conversationService.recordAssistantResponse(body.session_id, task.job_id, reply, body.context, body.history);
+        this.realtimeService.sendReply(clientId, {
+            reply,
+            jobId: task.job_id,
+            imageUrls: task.mask_all_overlay ? [task.mask_all_overlay] : [],
+        }, task.session_id);
+        this.realtimeService.sendStatus(clientId, "Task Completed", {
+            jobId: task.job_id,
+        }, task.session_id);
+        return { status: "ok" };
+    }
+    async getStatus(jobId) {
+        const task = await this.tasksService.getTask(jobId);
+        const session = await this.conversationService.getSession(task.session_id);
+        return {
+            jobId: task.job_id,
+            sessionId: task.session_id,
+            status: task.status,
+            imageUrl: task.image_url,
+            maskAllOverlay: task.mask_all_overlay,
+            reply: task.vlm_analysis,
+            errorCode: task.error_code,
+            errorMessage: task.error_message,
+            updatedAt: task.updated_at,
+            session,
+        };
+    }
+    async getSessionById(sessionId) {
+        const session = await this.conversationService.getSession(sessionId);
+        if (!session) {
+            throw new common_1.NotFoundException(`Session ${sessionId} not found`);
+        }
+        return session;
+    }
+    async getSessions(limit = 50) {
+        const sessions = await this.conversationService.listSessions(limit);
+        return sessions.map((session) => ({
+            sessionId: session.session_id,
+            lastQuestion: session.last_question || null,
+            lastReply: session.last_reply || null,
+            updatedAt: session.updated_at || null,
+            createdAt: session.created_at || null,
+            historyCount: Array.isArray(session.history) ? session.history.length : 0,
+        }));
+    }
+    getHealth() {
+        return {
+            status: "ok",
+            message: "Gateway is running",
+        };
+    }
+    async handleMessage(createChatDto, clientId) {
+        var _a;
+        const trimmedMessage = (_a = createChatDto.message) === null || _a === void 0 ? void 0 : _a.trim();
+        if (!trimmedMessage) {
+            throw new common_1.BadRequestException("message is required");
+        }
+        if (createChatDto.jobId && createChatDto.sessionId) {
+            const task = await this.tasksService.getTask(createChatDto.jobId);
+            await this.conversationService.recordUserMessage(createChatDto.sessionId, createChatDto.jobId, trimmedMessage, createChatDto.reset);
+            this.realtimeService.registerSessionClient(createChatDto.sessionId, clientId);
+            this.realtimeService.registerTaskClient(task.job_id, clientId);
+            this.realtimeService.registerTaskSession(task.job_id, createChatDto.sessionId);
+            await this.orchestrationService.enqueueVlm(task, trimmedMessage, createChatDto.reset, clientId);
+            return {
+                queued: true,
+                jobId: task.job_id,
+                reply: "Follow-up question accepted. Processing with VLM.",
+                imageUrls: [],
+            };
+        }
+        this.logger.log(`Fallback message flow for: ${trimmedMessage}`);
+        if (/^(xin chào|hello|hi)\b/i.test(trimmedMessage)) {
+            return {
+                reply: "Xin chào! Hãy tải ảnh hoặc gửi kèm jobId/sessionId để tiếp tục phân tích.",
+                imageUrls: [],
+            };
+        }
+        return {
+            reply: "Backend gateway đã hỗ trợ follow-up theo session. Hãy gửi kèm jobId và sessionId hoặc upload ảnh mới để bắt đầu pipeline.",
+            imageUrls: [],
+        };
+    }
+};
+exports.ChatService = ChatService;
+exports.ChatService = ChatService = ChatService_1 = __decorate([
+    (0, common_1.Injectable)(),
+    __metadata("design:paramtypes", [tasks_service_1.TasksService,
+        conversation_service_1.ConversationService,
+        orchestration_service_1.OrchestrationService,
+        realtime_service_1.RealtimeService])
+], ChatService);
+//# sourceMappingURL=chat.service.js.map
