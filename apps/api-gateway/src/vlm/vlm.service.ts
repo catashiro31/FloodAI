@@ -51,7 +51,7 @@ export class VlmService {
       messages: [
         {
           role: 'user',
-          content: 'Analyze these 2 images. Image 1 is natural, Image 2 is segmentation mask (Red: flooded building, Blue: flooded road, Green: water). Briefly describe the flood scene and disaster extent in Vietnamese.',
+          content: 'Analyze these 2 images. Image 1 is natural, Image 2 is segmentation mask (Red: flooded building, Purple: flooded road, Cyan/Light Blue: water, Orange: vehicle, Green: trees/grass). Briefly describe the flood scene and disaster extent in Vietnamese.',
           images: [base64Original, base64Mask],
         },
       ],

@@ -79,11 +79,28 @@ def compute_metrics(probs, config, h_img, w_img, threshold=0.8):
 
     building_total = num_building_flooded + num_building_nonflooded
 
-    # --- 4. Đếm xe trên đường ngập ---
-    vehicle_on_flood = cv2.bitwise_and(mask_vehicle, mask_road_flooded)
-    vehicle_clean = cv2.morphologyEx(vehicle_on_flood, cv2.MORPH_CLOSE, kernel)
-    num_vehicle_on_flood, _ = cv2.connectedComponents(vehicle_clean)
-    num_vehicle_on_flood = max(0, num_vehicle_on_flood - 1)
+    # --- 4. Đếm xe trên đường ngập/vùng nước (Nguy hiểm) ---
+    # Trong Semantic Segmentation, các class không chồng lấn pixel.
+    # Vì vậy ta kiểm tra xem đối tượng Xe có nằm trong hoặc tiếp giáp vùng ngập không.
+    flood_danger_mask = cv2.bitwise_or(mask_road_flooded, mask_water)
+    
+    # Tìm các đối tượng xe riêng biệt
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask_vehicle)
+    num_vehicle_on_flood = 0
+    
+    # Kernel giãn nở nhỏ để kiểm tra vùng lân cận (khoảng 7-10 pixel)
+    neighbor_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    
+    for i in range(1, num_labels):
+        # Tạo mask cho duy nhất chiếc xe thứ i
+        single_vehicle_mask = (labels == i).astype(np.uint8)
+        
+        # Giãn nở nhẹ chiếc xe để xem nó có chạm vào vùng nước không
+        dilated_vehicle = cv2.dilate(single_vehicle_mask, neighbor_kernel)
+        
+        # Kiểm tra giao thoa giữa vùng giãn nở của xe và vùng nguy hiểm
+        if np.any(cv2.bitwise_and(dilated_vehicle, flood_danger_mask)):
+            num_vehicle_on_flood += 1
 
     metrics = {
         "is_flooded": bool(is_flooded),
