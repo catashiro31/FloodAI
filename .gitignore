@@ -6,7 +6,8 @@ desktop.ini
 .idea/
 *.sublime-project
 *.sublime-workspace
-*uploads/
+**/uploads/
+!**/uploads/.gitkeep
 
 # --- Node.js ---
 node_modules/
@@ -26,8 +27,11 @@ yarn-error.log*
 .npm
 .yarn-integrity
 package-lock.json.tmp
-# Nếu bạn muốn commit lockfile thì bỏ comment dòng dưới
+# Commit lockfile để đồng bộ môi trường
 # package-lock.json
+
+# --- TypeScript ---
+*.tsbuildinfo
 
 # --- Python ---
 __pycache__/
@@ -74,9 +78,14 @@ qwen2-quant/
 .env.*.local
 .netrc
 .npmrc
+# Cấu hình ngrok cá nhân
+ngrok.yml
 
 # --- Logs và Tạm thời ---
 *.log
 logs/
 /tmp/
 temp/
+
+# --- Docker Persistence ---
+ollama_data/
