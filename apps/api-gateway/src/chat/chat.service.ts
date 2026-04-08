@@ -235,8 +235,8 @@ export class ChatService {
 
     this.logger.log(`Recording assistant response for session ${body.session_id}, task ${task.job_id}`);
 
-    // Đảm bảo ghim Pure Mask (mask_all_overlay) vào phản hồi của Bot trong lịch sử
-    const assistantImageUrls = task.mask_all_overlay ? [task.mask_all_overlay] : [];
+    // Không đính kèm mask vào tin nhắn chat để tránh loãng nội dung, người dùng có thể xem ở panel phải
+    const assistantImageUrls = [];
 
     await this.conversationService.recordAssistantResponse(
       body.session_id,
@@ -258,14 +258,6 @@ export class ChatService {
       body.session_id || sessionId,
     );
 
-    this.realtimeService.sendStatus(
-      clientId,
-      "Task Completed",
-      {
-        jobId: task.job_id,
-      },
-      task.session_id,
-    );
 
     return { status: "ok" };
   }
@@ -365,7 +357,7 @@ export class ChatService {
       return {
         queued: true,
         jobId: task.job_id,
-        reply: "Follow-up question accepted. Processing with VLM.",
+        reply: "⏳ Đang truy vấn mô hình chuyên gia...",
         imageUrls: [],
       };
     }

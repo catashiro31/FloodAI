@@ -86,11 +86,7 @@ socket.on('uploadStatus', (data) => {
         if (data.details?.imageUrl) {
             updateSessionImage(data.details.imageUrl);
         }
-        if (data.details?.maskAllOverlay && lastBotMsg) {
-            // Hiển thị trực tiếp Pure Mask (Full Mask) trong giao diện chat
-            lastBotMsg.imageUrls = [resolveImageUrl(data.details.maskAllOverlay)];
-        }
-        if (lastBotMsg) lastBotMsg.text = '✅ Phân đoạn hoàn tất! Mask dự đoán đầy đủ tất cả class đang được hiển thị.';
+        if (lastBotMsg) lastBotMsg.text = '✅ Phân đoạn hoàn tất! Mời bạn đặt câu hỏi về ảnh.';
         unlockChat();
         renderAnalysisMessages(true);
         return;
