@@ -1,15 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
-import ollama from 'ollama';
+import { Ollama } from 'ollama';
 
 @Injectable()
 export class VlmService {
   private readonly logger = new Logger(VlmService.name);
+  private readonly ollama: Ollama;
+
+  constructor() {
+    const host = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
+    this.ollama = new Ollama({ host });
+  }
 
   /**
    * Phân tích đơn giản với một model (dùng cho follow-up chat).
    */
   async analyze(question: string, base64Image: string, model = 'gemma4') {
-    const response = await ollama.chat({
+    const response = await this.ollama.chat({
       model,
       messages: [
         {
@@ -40,7 +46,7 @@ export class VlmService {
 
     // === Step 1: Moondream (1.6B) nhìn cả 2 ảnh cực nhanh ===
     this.logger.log('  [1/2] Moondream đang quét ảnh gốc & mask...');
-    const visionResponse = await ollama.chat({
+    const visionResponse = await this.ollama.chat({
       model: 'moondream', // Mô hình Vision siêu nhẹ
       messages: [
         {
@@ -73,7 +79,7 @@ BÁO CÁO NHANH (Tiếng Việt):
 - Đánh giá: [Ngắn gọn]
 - Khuyến nghị: [1 câu duy nhất]`;
 
-    const expertResponse = await ollama.chat({
+    const expertResponse = await this.ollama.chat({
       model: 'gemma2:2b', // Mô hình Reasoning siêu nhẹ
       messages: [{ role: 'user', content: expertPrompt }],
       options: {

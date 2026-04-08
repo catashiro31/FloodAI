@@ -1,0 +1,113 @@
+version: '3.8'
+
+services:
+  # 1. Cơ sở dữ liệu PostgreSQL
+  db:
+    image: postgres:15-alpine
+    container_name: floodai_db
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_NAME:-floodai}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-31102006}
+    volumes:
+      - ./apps/api-gateway/database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - floodai_network
+
+  # 2. Ollama Service (VLM)
+  ollama:
+    image: ollama/ollama
+    container_name: floodai_ollama
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - floodai_network
+
+  # 3. Ollama Setup (Tự động tải model)
+  ollama-setup:
+    image: curlimages/curl:latest
+    container_name: floodai_ollama_setup
+    depends_on:
+      - ollama
+    networks:
+      - floodai_network
+    command: >
+      sh -c "sleep 5 && 
+             curl -X POST http://ollama:11434/api/pull -d '{\"name\": \"moondream\"}' && 
+             curl -X POST http://ollama:11434/api/pull -d '{\"name\": \"gemma2:2b\"}'"
+
+  # 4. API Gateway (NestJS Backend)
+  gateway:
+    build:
+      context: ./apps/api-gateway
+      dockerfile: Dockerfile
+    container_name: floodai_api
+    depends_on:
+      - db
+    env_file:
+      - .env.docker
+    environment:
+      DB_HOST: db
+      SEGMENT_SERVICE_URL: http://worker:8080/inference
+      # Lưu ý: Ollama trong Docker gọi qua tên service
+      OLLAMA_HOST: http://ollama:11434 
+    ports:
+      - "5000:5000"
+    volumes:
+      - uploads_data:/app/uploads
+    networks:
+      - floodai_network
+
+  # 5. Segmentation Worker (AI Worker)
+  worker:
+    build:
+      context: ./services/segmentation_worker
+      dockerfile: Dockerfile
+    container_name: floodai_worker
+    depends_on:
+      - gateway
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      UPLOADS_DIR: /app/uploads
+      MODEL_WEIGHT_PATH: /app/model/best_ssl_model.pth
+    volumes:
+      - ./model:/app/model:ro  # Gắn kết Model Weights từ host
+      - uploads_data:/app/uploads
+    networks:
+      - floodai_network
+
+  # 6. Web Chat (Frontend)
+  web:
+    build:
+      context: ./apps/web_chat
+      dockerfile: Dockerfile
+    container_name: floodai_web
+    ports:
+      - "3000:3000"
+    networks:
+      - floodai_network
+
+networks:
+  floodai_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  ollama_data:
+  uploads_data:

@@ -9,7 +9,7 @@ from inference import Config, ComprehensiveVisualizer
 from file_handler import get_filename_from_url
 from db_handler import TABLE_NAME, get_data, update_data, upload_image_to_bucket
 
-MODEL_WEIGHT = r"f:\Nghiên cứu khoa học\Segmentation\FloodAI\model\best_ssl_model.pth"
+MODEL_WEIGHT = os.getenv("MODEL_WEIGHT_PATH", r"f:\Nghiên cứu khoa học\Segmentation\FloodAI\model\best_ssl_model.pth")
 important_class = list(range(1, 10))
 
 job_status: Dict[str, dict] = {}
@@ -162,7 +162,12 @@ def run_segmentation_task(
 
         # Lưu mask cục bộ (giờ đây overlay_content chính là pure mask từ inference.py)
         import base64 as b64mod
-        masks_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "apps", "api-gateway", "uploads", "masks")
+        # Đường dẫn thư mục uploads (Ưu tiên biến môi trường, mặc định là cấu hình tương đối)
+        uploads_base = os.getenv("UPLOADS_DIR")
+        if not uploads_base:
+            uploads_base = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "apps", "api-gateway", "uploads")
+        
+        masks_dir = os.path.join(uploads_base, "masks")
         os.makedirs(masks_dir, exist_ok=True)
         
         mask_filename = f"{job_id}_mask_all_overlay.png"
