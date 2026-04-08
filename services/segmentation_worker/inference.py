@@ -101,13 +101,24 @@ class ComprehensiveVisualizer:
     def __init__(self, model_path, _, device=None):
         self.config = SSLConfig()
         
-        # Thiết lập thiết bị xử lý: nếu CPU-only sẽ dùng 'cpu', nếu có Nvidia GPU dùng 'cuda'.
-        self.device = device if device else ('cuda' if torch.cuda.is_available() else 'cpu')
+        # Tự động nhận diện thiết bị: Ưu tiên CUDA > CPU
+        if device:
+            self.device = device
+        else:
+            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
-        print(f"🏗️ Đang nạp mô hình FloodWizSSL với backbone {self.config.BACKBONE} trên {self.device}")
-        
+        if self.device == 'cuda':
+            gpu_name = torch.cuda.get_device_name(0)
+            print(f"🚀 [GPU MODE] Đang nạp mô hình trên: {gpu_name}")
+            torch.backends.cudnn.benchmark = True
+        else:
+            print(f"🐢 [CPU MODE] Không tìm thấy GPU, đang chạy trên CPU (Chậm hơn)")
+
         self.model = FloodWizSSL(self.config.NUM_CLASSES, self.config.BACKBONE).to(self.device)
-        self.model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
+        
+        # Load weights an toàn
+        checkpoint = torch.load(model_path, map_location=self.device, weights_only=True)
+        self.model.load_state_dict(checkpoint)
         self.model.eval()
         
         self.transform = A.Compose([
