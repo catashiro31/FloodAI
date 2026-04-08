@@ -86,7 +86,10 @@ services:
     #         - driver: nvidia
     #           count: all
     #           capabilities: [gpu]
+    env_file:
+      - .env.docker
     environment:
+      DB_HOST: db
       UPLOADS_DIR: /app/uploads
       MODEL_WEIGHT_PATH: /app/model/best_ssl_model.pth
     volumes:

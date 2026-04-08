@@ -7,7 +7,7 @@ import requests
 
 from inference import Config, ComprehensiveVisualizer
 from file_handler import get_filename_from_url
-from db_handler import TABLE_NAME, get_data, update_data, upload_image_to_bucket
+from db_handler import TABLE_NAME, get_data, update_data
 
 MODEL_WEIGHT = os.getenv("MODEL_WEIGHT_PATH", r"f:\Nghiên cứu khoa học\Segmentation\FloodAI\model\best_ssl_model.pth")
 important_class = list(range(1, 10))
