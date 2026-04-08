@@ -21,13 +21,13 @@ services:
     image: ollama/ollama
     container_name: floodai_ollama
     restart: always
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # deploy:       BẬT NẾU CÓ CARD GPU
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
     volumes:
       - ollama_data:/root/.ollama
     networks:
@@ -76,13 +76,13 @@ services:
     container_name: floodai_worker
     depends_on:
       - gateway
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # deploy:   BẬT NẾU CÓ CARD GPU
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
     environment:
       UPLOADS_DIR: /app/uploads
       MODEL_WEIGHT_PATH: /app/model/best_ssl_model.pth
