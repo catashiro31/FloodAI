@@ -6,6 +6,7 @@ desktop.ini
 .idea/
 *.sublime-project
 *.sublime-workspace
+*uploads/
 
 # --- Node.js ---
 node_modules/

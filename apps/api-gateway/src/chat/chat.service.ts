@@ -24,7 +24,7 @@ export class ChatService {
     private readonly conversationService: ConversationService,
     private readonly orchestrationService: OrchestrationService,
     private readonly realtimeService: RealtimeService,
-  ) {}
+  ) { }
 
   async handleHttpMessage(createChatDto: CreateChatDto) {
     return this.handleMessage(createChatDto);
@@ -234,7 +234,7 @@ export class ChatService {
     );
 
     this.logger.log(`Recording assistant response for session ${body.session_id}, task ${task.job_id}`);
-    
+
     // Đảm bảo ghim Pure Mask (mask_all_overlay) vào phản hồi của Bot trong lịch sử
     const assistantImageUrls = task.mask_all_overlay ? [task.mask_all_overlay] : [];
 

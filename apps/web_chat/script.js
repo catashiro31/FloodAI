@@ -166,7 +166,7 @@ socket.on('receiveMessage', (data) => {
 function updateSessionImage(url) {
     const imgEl = document.getElementById('current-session-image');
     const placeholderEl = document.getElementById('session-image-placeholder');
-    
+
     if (imgEl && url) {
         imgEl.src = resolveImageUrl(url);
         imgEl.classList.remove('hidden');
@@ -545,7 +545,7 @@ function initComparisonSliders() {
             let x = clientX - rect.left;
             x = Math.max(0, Math.min(x, rect.width));
             const percent = (x / rect.width) * 100;
-            
+
             // Xử lý clip layer trên (mask)
             const topImg = container.querySelector('.comparison-img-top');
             if (topImg) {
@@ -553,7 +553,7 @@ function initComparisonSliders() {
                 // clip-path: inset(0 100-percent% 0 0) - cắt phần bên PHẢI đi
                 topImg.style.clipPath = `inset(0 ${100 - percent}% 0 0)`;
             }
-            
+
             handle.style.left = `${percent}%`;
         }
 
@@ -608,7 +608,7 @@ function createNewSession() {
     sessionHasImage = false;
     currentMetrics = null;
     isProcessing = false;
-    
+
     if (metricsPanelEl) metricsPanelEl.classList.add('hidden');
     updateSessionImage(null);
     renderMetricsPanel(null);
