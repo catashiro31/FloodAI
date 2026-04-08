@@ -83,4 +83,5 @@ async def get_status(job_id: UUID):
 
 if __name__ == "__main__":
     nest_asyncio.apply()
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # Chế độ reload giúp code tự cập nhật khi được mount qua Docker Volumes
+    uvicorn.run("api:app", host="0.0.0.0", port=port, reload=True)

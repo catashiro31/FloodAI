@@ -66,6 +66,37 @@ Mẫu cấu trúc đầy đủ để mở rộng dự án (bao gồm `cicd`, `mo
 5. Gateway gọi reasoning worker (`services/reasonning_worker`) để sinh phân tích VLM.
 6. Gateway cập nhật DB và bắn realtime status/answer qua Socket.IO cho UI.
 
+## Hướng dẫn chạy dự án với Docker (Dành cho Developer/Tester)
+
+Dự án đã được cấu hình Docker Compose đầy đủ. Bạn không cần phải cài đặt Node.js hay Python thủ công. 
+
+### 1. Yêu cầu hệ thống
+- Đã cài đặt [Docker](https://www.docker.com/) và Docker Compose.
+- File model trọng số AI: `model/best_ssl_model.pth` (Cần pull từ Git hoặc tải đặt đúng vào thư mục `model/`).
+- File cấu hình môi trường `.env.docker`.
+
+### 2. Các bước chạy
+Mở terminal tại thư mục gốc của dự án và chạy:
+```bash
+docker compose up -d --build
+```
+
+**Docker Compose sẽ tự động thực hiện:**
+- Khởi tạo Database (PostgreSQL) kèm dữ liệu từ schema.
+- Kéo bộ Ollama model phục vụ sinh text (VLM).
+- Xây dựng (Build) Gateway Backend (NestJS).
+- Cài đặt thư viện và khởi chạy AI Worker (Python FastAPI).
+- Cung cấp giao diện Frontend Web.
+
+### 3. Truy cập hệ thống
+- Giao diện Web (Chat): [http://localhost:3000](http://localhost:3000)
+- API Gateway (NestJS): [http://localhost:5000](http://localhost:5000)
+
+### 4. Code và Hot-reload
+- Các thư mục source code (`apps/web_chat`, `services/segmentation_worker`, `apps/api-gateway`) đều được mount trực tiếp vào container. Bạn chỉ cần sửa code trên máy chủ (host), thay đổi sẽ **lập tức có hiệu lực** mà không cần build lại.
+- Để xem log quá trình dự đoán AI (hoặc kiểm tra lỗi): `docker compose logs -f worker`
+- Tắt hệ thống: `docker compose down`
+
 ## Tài liệu theo mục
 - `apps/api-gateway/README.md`: Gateway, API endpoints, realtime flow, env config.
 - `apps/web_chat/README.md`: UI chat, cấu hình backend, socket events.

@@ -71,6 +71,9 @@ qwen2-quant/
 *.weights
 *.pt
 
+# Ngoại lệ: Cho phép commit model chính và database
+!apps/api-gateway/database/
+
 # --- Bảo mật và Cấu hình Nhạy cảm ---
 .env
 *.env
@@ -78,8 +81,11 @@ qwen2-quant/
 .env.*.local
 .netrc
 .npmrc
-# Cấu hình ngrok cá nhân
+# Khóa cấu hình ngrok cá nhân
 ngrok.yml
+
+# Ngoại lệ: Cấu hình mặc định cho Docker 
+!.env.docker
 
 # --- Logs và Tạm thời ---
 *.log

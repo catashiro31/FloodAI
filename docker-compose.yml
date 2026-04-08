@@ -54,6 +54,7 @@ services:
     container_name: floodai_api
     depends_on:
       - db
+    command: npm run start:dev       # DEV MODE: Ghi đè cấu hình production để chạy ở chế độ Hot-reload
     env_file:
       - .env.docker
     environment:
@@ -64,6 +65,8 @@ services:
     ports:
       - "5000:5000"
     volumes:
+      - ./apps/api-gateway:/app      # DEV MODE: Mount thư mục code
+      - /app/node_modules            # Giữ lại node_modules bên trong container (phòng khi bên ngoài host chưa chạy npm install)
       - uploads_data:/app/uploads
     networks:
       - floodai_network
@@ -87,6 +90,7 @@ services:
       UPLOADS_DIR: /app/uploads
       MODEL_WEIGHT_PATH: /app/model/best_ssl_model.pth
     volumes:
+      - ./services/segmentation_worker:/app      # DEV MODE: Mount source code trực tiếp để Auto Reload
       - ./model:/app/model:ro  # Gắn kết Model Weights từ host
       - uploads_data:/app/uploads
     networks:
@@ -100,6 +104,8 @@ services:
     container_name: floodai_web
     ports:
       - "3000:3000"
+    volumes:
+      - ./apps/web_chat:/usr/share/nginx/html    # DEV MODE: Sửa HTML/CSS thấy ngay kết quả
     networks:
       - floodai_network
 
