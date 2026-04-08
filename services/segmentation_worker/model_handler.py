@@ -102,10 +102,14 @@ def run_segmentation_task(
         # Tải ảnh: Nếu là đường dẫn cục bộ /static/... thì đọc trực tiếp từ disk
         image_content = None
         if image_source.startswith("/static/"):
-            # Tìm đường dẫn tuyệt đối tới thư mục uploads của gateway
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            # Lấy thư mục uploads từ cấu hình (mặc định /app/uploads trong Docker)
+            uploads_base = os.getenv("UPLOADS_DIR")
+            if not uploads_base:
+                base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                uploads_base = os.path.join(base_dir, "apps", "api-gateway", "uploads")
+                
             file_rel_path = image_source.replace("/static/", "").replace("/", os.sep)
-            abs_path = os.path.join(base_dir, "apps", "api-gateway", "uploads", file_rel_path)
+            abs_path = os.path.join(uploads_base, file_rel_path)
             
             if os.path.exists(abs_path):
                 with open(abs_path, "rb") as f:
@@ -113,6 +117,9 @@ def run_segmentation_task(
                 print(f"✅ Loaded original image from local disk: {abs_path}")
             else:
                 print(f"⚠️ Local file not found: {abs_path}, falling back to request (might fail)")
+                # Sửa lại fallback url nếu chạy trong môi trường cục bộ
+                gateway_url = os.getenv("GATEWAY_BASE_URL", "http://localhost:5000")
+                image_source = f"{gateway_url}{image_source}"
         
         if image_content is None:
             # Fallback dùng requests (cho các ảnh online cũ hoặc nếu disk access thất bại)
