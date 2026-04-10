@@ -89,20 +89,21 @@
                 </div>
 
                 <!-- Chat History -->
-                <div id="analysis-chat-history" class="flex-1 space-y-8 overflow-y-auto px-6 py-8 custom-scrollbar scroll-smooth">
+                <div id="analysis-chat-history" class="relative flex-1 space-y-8 overflow-y-auto px-6 py-8 custom-scrollbar scroll-smooth">
                 </div>
 
                 <!-- Input Area -->
                 <div class="border-t border-white/5 p-6 bg-ui-bg/50 backdrop-blur-md">
-                    <div class="relative flex flex-col gap-3">
-                        <div id="analysis-previews" class="flex flex-wrap gap-3 empty:hidden"></div>
-                        <div class="group relative flex items-center gap-2 rounded-2xl bg-white/5 p-1.5 transition-all focus-within:bg-white/10 border border-white/5 focus-within:border-brand-primary/30 shadow-2xl">
-                            <button id="analysis-upload-trigger" class="flex h-11 w-11 items-center justify-center rounded-xl text-ui-muted transition-all hover:bg-white/10 hover:text-brand-primary" title="Tải ảnh lên">
-                                <i data-lucide="camera" class="h-5 w-5"></i>
-                            </button>
+                    <div class="relative flex flex-col gap-4">
+                        <button id="session-upload-gate" type="button" class="session-upload-gate hidden w-full overflow-hidden rounded-[28px] border border-dashed border-brand-primary/30 bg-gradient-to-br from-brand-primary/10 via-white/5 to-transparent p-5 text-left shadow-2xl shadow-brand-primary/10 transition-all hover:border-brand-primary/60 hover:shadow-brand-primary/20"></button>
+                        <div id="analysis-previews" class="hidden"></div>
+                        <div id="analysis-composer" class="group relative flex items-center gap-3 rounded-[28px] bg-white/5 p-2 transition-all focus-within:bg-white/10 border border-white/5 focus-within:border-brand-primary/30 shadow-2xl">
                             <input id="analysis-file-input" class="hidden" accept="image/*" type="file" />
-                            <input id="analysis-chat-input" class="flex-1 bg-transparent px-3 py-2 text-sm font-medium outline-none placeholder:text-ui-muted/40" placeholder="Chọn ảnh rồi nhấn gửi..." type="text" />
-                            <button id="analysis-send-btn" class="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-primary text-white transition-all hover:scale-105 active:scale-95">
+                            <div class="min-w-0 flex-1 px-2">
+                                <input id="analysis-chat-input" class="w-full bg-transparent py-2 text-sm font-medium outline-none placeholder:text-ui-muted/40" placeholder="Chọn ảnh ở ô lớn bên trên để bắt đầu..." type="text" />
+                                <p id="analysis-input-hint" class="pt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-ui-muted/35">Session mới cần một ảnh trước khi chat.</p>
+                            </div>
+                            <button id="analysis-send-btn" class="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-primary text-white transition-all hover:scale-105 active:scale-95">
                                 <i data-lucide="send" class="h-5 w-5"></i>
                             </button>
                         </div>
@@ -112,7 +113,7 @@
             </div>
 
             <!-- Right Column: Image Preview & Metrics -->
-            <div class="hidden w-96 flex-col border-l border-white/5 lg:flex bg-ui-bg/30">
+            <div id="analysis-side-panel" class="hidden w-96 flex-col border-l border-white/5 lg:flex bg-ui-bg/30">
                 <!-- Session Image Preview (Top) -->
                 <div class="flex h-64 flex-col border-b border-white/5 p-6">
                     <div class="mb-4 flex items-center justify-between">
@@ -132,7 +133,7 @@
                 </div>
 
                 <!-- Metrics Panel (Bottom) -->
-                <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                <div class="flex-1 overflow-hidden p-6">
                     <div class="mb-6 flex items-center justify-between">
                         <h3 class="text-[10px] font-black uppercase tracking-[0.2em] text-ui-muted">Assessment Metrics</h3>
                         <div id="metric-status-badge" class="hidden h-2 w-2 rounded-full bg-emerald-500"></div>
@@ -218,7 +219,7 @@
     </div>
 
     <!-- Footer -->
-    <footer class="flex flex-col items-center justify-between gap-6 border-t border-white/5 bg-white/2 p-8 md:flex-row md:pl-[300px]">
+    <footer id="app-footer" class="flex flex-col items-center justify-between gap-6 border-t border-white/5 bg-white/2 p-8 md:flex-row md:pl-[300px]">
         <div>
             <span class="text-lg font-black tracking-tighter text-brand-primary">FloodWiz</span>
             <span class="mx-4 text-ui-muted/20">|</span>

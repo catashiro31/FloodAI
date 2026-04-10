@@ -31,21 +31,16 @@ let sessions = [];
 let sessionHasImage = false;
 let currentMetrics = null;
 let isProcessing = false; // Global lock for any AI processing
+let sessionImageUrl = '';
+let selectedPreviewUrl = '';
+let isSessionHydrating = true;
 
 if (!sessionId) {
     sessionId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2);
     localStorage.setItem('session_id', sessionId);
 }
 
-let analysisMessages = [
-    {
-        id: "1",
-        sender: "bot",
-        text: "Chào mừng bạn đến FloodWiz! Hãy tải lên ảnh UAV/drone để bắt đầu phân tích ngập lụt. Mỗi phiên chỉ cho phép 1 ảnh.",
-        createdAt: Date.now(),
-        imageUrls: []
-    }
-];
+let analysisMessages = [];
 
 let selectedFiles = [];
 
@@ -54,10 +49,13 @@ const analysisViewEl = document.getElementById('analysis-view');
 const galleryViewEl = document.getElementById('gallery-view');
 const analysisChatHistoryEl = document.getElementById('analysis-chat-history');
 const analysisChatInputEl = document.getElementById('analysis-chat-input');
+const analysisInputHintEl = document.getElementById('analysis-input-hint');
 const analysisSendBtnEl = document.getElementById('analysis-send-btn');
-const analysisUploadTriggerEl = document.getElementById('analysis-upload-trigger');
 const analysisFileInputEl = document.getElementById('analysis-file-input');
 const analysisPreviewsEl = document.getElementById('analysis-previews');
+const sessionUploadGateEl = document.getElementById('session-upload-gate');
+const analysisSidePanelEl = document.getElementById('analysis-side-panel');
+const appFooterEl = document.getElementById('app-footer');
 const themeToggleEl = document.getElementById('theme-toggle');
 const newSessionBtnEl = document.getElementById('new-session-btn');
 const sessionListEl = document.getElementById('session-list');
@@ -137,14 +135,14 @@ socket.on('receiveMessage', (data) => {
 
     if (thinkingIdx !== -1) {
         analysisMessages[thinkingIdx].text = data.reply;
-        analysisMessages[thinkingIdx].imageUrls = (data.imageUrls || []).map(resolveImageUrl);
+        analysisMessages[thinkingIdx].imageUrls = [];
     } else {
         analysisMessages.push({
             id: Date.now().toString(),
             sender: 'bot',
             text: data.reply,
             createdAt: data.createdAt ? new Date(data.createdAt).getTime() : Date.now(),
-            imageUrls: (data.imageUrls || []).map(resolveImageUrl)
+            imageUrls: []
         });
     }
 
@@ -159,18 +157,40 @@ socket.on('receiveMessage', (data) => {
 });
 // ====================== RIGHT PANEL CONTROL ======================
 
+function revokeObjectUrl(url) {
+    if (url && typeof url === 'string' && url.startsWith('blob:')) {
+        URL.revokeObjectURL(url);
+    }
+}
+
+function setSessionImageUrl(url) {
+    const resolvedUrl = resolveImageUrl(url);
+    if (sessionImageUrl && sessionImageUrl !== resolvedUrl) {
+        revokeObjectUrl(sessionImageUrl);
+    }
+    sessionImageUrl = resolvedUrl || '';
+}
+
 function updateSessionImage(url) {
     const imgEl = document.getElementById('current-session-image');
     const placeholderEl = document.getElementById('session-image-placeholder');
+    const resolvedUrl = resolveImageUrl(url);
 
-    if (imgEl && url) {
-        imgEl.src = resolveImageUrl(url);
+    setSessionImageUrl(resolvedUrl);
+
+    if (imgEl && resolvedUrl) {
+        imgEl.src = resolvedUrl;
         imgEl.classList.remove('hidden');
         if (placeholderEl) placeholderEl.classList.add('hidden');
     } else if (imgEl) {
+        imgEl.src = '';
         imgEl.classList.add('hidden');
         if (placeholderEl) placeholderEl.classList.remove('hidden');
     }
+
+    renderSelectedPreviews();
+    renderSessionUploadGate();
+    syncComposerState();
 }
 
 // ====================== METRICS PANEL ======================
@@ -221,30 +241,117 @@ function renderMetricsPanel(metrics) {
 
 // ====================== CHAT LOCK/UNLOCK ======================
 
+function renderSessionUploadGate() {
+    if (!sessionUploadGateEl) return;
+
+    const gateVisible = !sessionHasImage;
+    const gatePreviewUrl = selectedPreviewUrl || (!sessionHasImage ? sessionImageUrl : '');
+
+    sessionUploadGateEl.classList.toggle('hidden', !gateVisible);
+    if (!gateVisible) {
+        sessionUploadGateEl.innerHTML = '';
+        return;
+    }
+
+    const hasPendingImage = Boolean(gatePreviewUrl);
+    const selectedFile = selectedFiles[0];
+
+    sessionUploadGateEl.disabled = isProcessing;
+    sessionUploadGateEl.classList.toggle('is-ready', hasPendingImage);
+    sessionUploadGateEl.classList.toggle('is-disabled', isProcessing);
+
+    sessionUploadGateEl.innerHTML = `
+        <div class="session-upload-gate__layout flex items-center gap-4 lg:gap-5">
+            <div class="session-upload-gate__visual flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-[24px] lg:h-28 lg:w-28">
+                ${hasPendingImage
+                    ? `<img src="${gatePreviewUrl}" alt="Selected session image" class="session-upload-gate__thumb h-full w-full object-cover" />`
+                    : `<div class="flex flex-col items-center gap-2 text-brand-primary">
+                            <i data-lucide="image-plus" class="h-8 w-8"></i>
+                            <span class="text-[9px] font-black uppercase tracking-[0.25em]">1 ảnh</span>
+                       </div>`}
+            </div>
+            <div class="min-w-0 flex-1">
+                <div class="mb-2 flex flex-wrap items-center gap-2">
+                    <span class="session-upload-gate__badge rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-brand-primary">
+                        ${hasPendingImage ? 'Ảnh đã sẵn sàng' : 'Bắt buộc trước khi chat'}
+                    </span>
+                    <span class="text-[10px] font-bold uppercase tracking-[0.16em] text-ui-muted/60">
+                        JPG • PNG • Paste trực tiếp
+                    </span>
+                </div>
+                <h3 class="text-lg font-black tracking-tight text-ui-text">
+                    ${hasPendingImage ? 'Nhấn gửi để chạy segment cho session này' : 'Bắt đầu session mới bằng một ảnh'}
+                </h3>
+                <p class="mt-1 text-sm leading-relaxed text-ui-muted">
+                    ${hasPendingImage
+                        ? 'Bạn có thể thêm một câu hỏi ngắn ở ô chat hoặc gửi ngay để FloodWiz segment ảnh.'
+                        : 'Bấm để chọn ảnh, kéo thả file vào đây, hoặc dán ảnh bằng Ctrl+V để mở chat cho session này.'}
+                </p>
+                <p class="mt-3 truncate text-[11px] font-bold text-ui-muted/75">
+                    ${selectedFile?.name || 'Mẹo: sử dụng ảnh chụp từ UAV/drone để kết quả segment ổn định hơn.'}
+                </p>
+            </div>
+            <div class="session-upload-gate__cta inline-flex shrink-0 items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-ui-text">
+                <i data-lucide="${hasPendingImage ? 'refresh-cw' : 'mouse-pointer-click'}" class="h-4 w-4 text-brand-primary"></i>
+                <span>${isProcessing ? 'Đang gửi ảnh...' : hasPendingImage ? 'Đổi ảnh' : 'Chọn ảnh'}</span>
+            </div>
+        </div>
+    `;
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function syncComposerState() {
+    const hasPendingImage = selectedFiles.length > 0;
+    const inputLockedByGate = !sessionHasImage && !hasPendingImage;
+    const inputText = analysisChatInputEl?.value.trim() || '';
+    const canSend = !isProcessing && (sessionHasImage ? inputText.length > 0 : hasPendingImage);
+
+    if (analysisChatInputEl) {
+        analysisChatInputEl.disabled = isProcessing || inputLockedByGate;
+        analysisChatInputEl.placeholder = isProcessing
+            ? "⏳ Đang xử lý, vui lòng chờ..."
+            : sessionHasImage
+                ? "Nhập câu hỏi về ảnh đã tải lên..."
+                : hasPendingImage
+                    ? "Thêm ghi chú cho lần segment này (tuỳ chọn)..."
+                    : "Chọn ảnh ở ô lớn bên trên để bắt đầu...";
+        analysisChatInputEl.classList.toggle('opacity-50', isProcessing || inputLockedByGate);
+        analysisChatInputEl.classList.toggle('cursor-not-allowed', isProcessing || inputLockedByGate);
+    }
+
+    if (analysisInputHintEl) {
+        analysisInputHintEl.textContent = isProcessing
+            ? 'FloodWiz đang xử lý ảnh, composer sẽ mở lại ngay khi xong.'
+            : sessionHasImage
+                ? 'Ảnh của session đang được ghim bên cạnh để bạn hỏi tiếp.'
+                : hasPendingImage
+                    ? 'Ảnh đã chọn. Bạn có thể gửi ngay hoặc thêm một câu hỏi ngắn.'
+                    : 'Session mới cần một ảnh trước khi chat.';
+    }
+
+    if (analysisSendBtnEl) {
+        analysisSendBtnEl.disabled = !canSend;
+        analysisSendBtnEl.classList.toggle('opacity-40', !canSend);
+        analysisSendBtnEl.classList.toggle('pointer-events-none', !canSend);
+        analysisSendBtnEl.title = sessionHasImage
+            ? 'Gửi câu hỏi'
+            : hasPendingImage
+                ? 'Gửi ảnh để segment'
+                : 'Hãy chọn ảnh trước';
+    }
+
+    renderSessionUploadGate();
+}
+
 function lockChat() {
     isProcessing = true;
-    if (analysisChatInputEl) {
-        analysisChatInputEl.disabled = true;
-        analysisChatInputEl.placeholder = "⏳ Đang xử lý, vui lòng chờ...";
-    }
-    if (analysisSendBtnEl) {
-        analysisSendBtnEl.disabled = true;
-        analysisSendBtnEl.classList.add('opacity-40', 'pointer-events-none');
-    }
+    syncComposerState();
 }
 
 function unlockChat() {
     isProcessing = false;
-    if (analysisChatInputEl) {
-        analysisChatInputEl.disabled = false;
-        analysisChatInputEl.placeholder = sessionHasImage
-            ? "Nhập câu hỏi về ảnh đã tải lên..."
-            : "Chọn ảnh rồi nhấn gửi để bắt đầu phân tích...";
-    }
-    if (analysisSendBtnEl) {
-        analysisSendBtnEl.disabled = false;
-        analysisSendBtnEl.classList.remove('opacity-40', 'pointer-events-none');
-    }
+    syncComposerState();
 }
 
 // ====================== SESSIONS ======================
@@ -302,6 +409,9 @@ async function loadSessionHistory(id) {
     sessionHasImage = false;
     currentMetrics = null;
     isProcessing = false;
+    isSessionHydrating = true;
+    clearSelectedFiles();
+    updateSessionImage(null);
     if (metricsPanelEl) metricsPanelEl.classList.add('hidden');
 
     // Reset messages to default welcome
@@ -321,24 +431,16 @@ async function loadSessionHistory(id) {
             const dbSession = data.session;
             if (dbSession && dbSession.history && dbSession.history.length > 0) {
                 analysisMessages = dbSession.history.map((h, i) => {
-                    // Ưu tiên imageUrls (mảng), fallback về imageUrl (chuỗi đơn) nếu là dữ liệu cũ
-                    let urls = h.imageUrls || (h.imageUrl ? [h.imageUrl] : []);
-                    urls = urls.map(resolveImageUrl);
-
                     return {
                         id: i.toString(),
                         sender: (h.role === 'user' || h.sender === 'user') ? 'user' : 'bot',
                         text: h.content || h.text || '',
                         createdAt: h.createdAt ? new Date(h.createdAt).getTime() : Date.now(),
-                        imageUrls: urls
+                        imageUrls: []
                     };
-                });
+                }).filter((msg) => !(msg.sender === 'user' && !msg.text.trim()));
             } else {
-                analysisMessages = [{
-                    id: "1", sender: "bot",
-                    text: "Phiên này chưa có lịch sử chat. Hãy tải ảnh lên để bắt đầu!",
-                    createdAt: Date.now(), imageUrls: []
-                }];
+                analysisMessages = [];
             }
             renderAnalysisMessages(true);
         }
@@ -363,25 +465,24 @@ async function loadSessionHistory(id) {
                     renderMetricsPanel(null);
                 }
 
+                isSessionHydrating = false;
                 unlockChat();
-                updateUploadButton();
+                renderAnalysisMessages(true);
             } else {
                 sessionHasImage = false;
                 updateSessionImage(null);
                 renderMetricsPanel(null);
+                isSessionHydrating = false;
                 unlockChat();
-                updateUploadButton();
+                renderAnalysisMessages(true);
             }
         }
 
         if (activeView === 'gallery') renderGalleryForSession(id);
     } catch (err) {
         console.error('Failed to load history:', err);
-        analysisMessages = [{
-            id: "1", sender: "bot",
-            text: "Không thể tải lịch sử. Hãy thử tạo phiên mới.",
-            createdAt: Date.now(), imageUrls: []
-        }];
+        analysisMessages = [];
+        isSessionHydrating = false;
         unlockChat();
         renderAnalysisMessages(true);
     }
@@ -414,12 +515,16 @@ function switchView(view) {
     });
 
     if (view === 'analysis') {
+        document.body.classList.add('analysis-scroll-lock');
+        appFooterEl?.classList.add('hidden');
         analysisViewEl.classList.remove('hidden');
         analysisViewEl.classList.add('flex');
         galleryViewEl.classList.add('hidden');
         galleryViewEl.classList.remove('flex');
         renderAnalysisMessages(true);
     } else {
+        document.body.classList.remove('analysis-scroll-lock');
+        appFooterEl?.classList.remove('hidden');
         analysisViewEl.classList.add('hidden');
         analysisViewEl.classList.remove('flex');
         galleryViewEl.classList.remove('hidden');
@@ -604,56 +709,87 @@ function createNewSession() {
     sessionHasImage = false;
     currentMetrics = null;
     isProcessing = false;
+    isSessionHydrating = false;
 
     if (metricsPanelEl) metricsPanelEl.classList.add('hidden');
     updateSessionImage(null);
     renderMetricsPanel(null);
 
-    analysisMessages = [{
-        id: "1", sender: "bot",
-        text: "Phiên mới đã được tạo! Hãy tải ảnh UAV/drone lên để bắt đầu phân tích ngập lụt.",
-        createdAt: Date.now(), imageUrls: []
-    }];
+    analysisMessages = [];
     clearSelectedFiles();
     unlockChat();
-    updateUploadButton();
     renderAnalysisMessages(true);
     fetchSessions();
 }
 
-function updateUploadButton() {
-    if (analysisUploadTriggerEl) {
-        // Thay đổi: Không khóa nút upload vĩnh viễn nữa. 
-        // Chỉ khóa khi đang trong quá trình xử lý (isProcessing)
-        if (isProcessing) {
-            analysisUploadTriggerEl.disabled = true;
-            analysisUploadTriggerEl.classList.add('opacity-30', 'cursor-not-allowed');
-        } else {
-            analysisUploadTriggerEl.disabled = false;
-            analysisUploadTriggerEl.classList.remove('opacity-30', 'cursor-not-allowed');
-            analysisUploadTriggerEl.title = sessionHasImage ? 'Tải ảnh mới để phân tích lại' : 'Tải ảnh lên để bắt đầu';
-        }
+function shouldRenderWelcomeState() {
+    return !isSessionHydrating && !sessionHasImage && selectedFiles.length === 0 && analysisMessages.length === 0;
+}
+
+function shouldDimAnalysisPanels() {
+    return !isSessionHydrating && !sessionHasImage && selectedFiles.length === 0;
+}
+
+function syncAnalysisShellState() {
+    if (analysisSidePanelEl) {
+        analysisSidePanelEl.classList.toggle('analysis-side-panel--dimmed', shouldDimAnalysisPanels());
     }
+}
+
+function buildWelcomeStateMarkup() {
+    return `
+        <div class="analysis-empty-state">
+            <div class="analysis-empty-state__panel">
+                <div class="analysis-empty-state__logo">
+                    <i data-lucide="waves"></i>
+                </div>
+                <p class="text-[10px] font-black uppercase tracking-[0.28em] text-brand-primary/80">Flood Analysis</p>
+                <h2 class="mt-3 text-4xl font-black tracking-tight text-ui-text">FloodWiz</h2>
+                <p class="mt-4 text-sm leading-relaxed text-ui-muted">
+                    Chọn một ảnh UAV/drone trong khung upload bên dưới để bắt đầu segment cho session này.
+                </p>
+                <button type="button" data-open-upload="welcome" class="analysis-empty-state__upload">
+                    <span class="analysis-empty-state__upload-icon">
+                        <i data-lucide="image-plus"></i>
+                    </span>
+                    <span class="min-w-0 flex-1">
+                        <span class="block text-sm font-black tracking-tight text-ui-text">Tải ảnh để bắt đầu</span>
+                        <span class="mt-1 block text-[11px] font-bold text-ui-muted/80">Click để chọn ảnh, hoặc kéo thả / Ctrl+V ngay tại đây.</span>
+                    </span>
+                    <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-brand-primary">
+                        Chọn ảnh
+                    </span>
+                </button>
+            </div>
+        </div>
+    `;
 }
 
 function renderAnalysisMessages(scrollToBottom = false) {
     if (!analysisChatHistoryEl) return;
+    syncAnalysisShellState();
+
+    if (shouldRenderWelcomeState()) {
+        analysisChatHistoryEl.classList.add('analysis-chat-history--welcome');
+        analysisChatHistoryEl.innerHTML = buildWelcomeStateMarkup();
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+        return;
+    }
+
+    analysisChatHistoryEl.classList.remove('analysis-chat-history--welcome');
     analysisChatHistoryEl.innerHTML = analysisMessages.map(msg => {
         const safeText = (msg.text || '').trim();
         const hasText = safeText.length > 0;
-        const hasImages = msg.imageUrls && msg.imageUrls.length > 0;
         const isBot = msg.sender === "bot" || msg.sender === "assistant";
         const authorLabel = isBot ? "Neural Engine" : "Người dùng";
+
+        if (!hasText && !(isBot && msg.progress !== undefined)) {
+            return '';
+        }
 
         const textHtml = hasText
             ? `<div class="rounded-2xl p-5 shadow-sm ${isBot ? "rounded-bl-none glass-panel" : "chat-bubble-user"}">
                     <p class="text-sm font-medium leading-relaxed whitespace-pre-wrap">${safeText.replace(/\n/g, '<br>')}</p>
-               </div>`
-            : '';
-
-        const imagesHtml = hasImages
-            ? `<div class="${hasText ? "mt-4 " : ""}grid gap-3 grid-cols-1">
-                    ${msg.imageUrls.map(url => `<img src="${url}" class="max-h-72 w-full rounded-2xl border border-white/10 object-cover shadow-2xl cursor-pointer hover:opacity-90 transition-opacity" onclick="window.open('${url}', '_blank')" />`).join('')}
                </div>`
             : '';
 
@@ -686,7 +822,6 @@ function renderAnalysisMessages(scrollToBottom = false) {
                 <div class="max-w-[80%]">
                     ${textHtml}
                     ${progressHtml}
-                    ${imagesHtml}
                     <p class="mt-2 px-1 text-[10px] font-bold uppercase tracking-[0.15em] text-ui-muted/50 ${msg.sender === "user" ? "text-right" : ""}">
                         ${authorLabel} • ${formatRelativeTime(msg.createdAt || Date.now())}
                     </p>
@@ -708,20 +843,67 @@ function isImageFile(file) {
     return Boolean(file && typeof file.type === 'string' && file.type.startsWith('image/'));
 }
 
-function clearSelectedFiles() {
+function clearSelectedFiles(options = {}) {
+    const { preservePreview = false } = options;
     selectedFiles = [];
-    if (analysisPreviewsEl) analysisPreviewsEl.innerHTML = '';
+    if (!preservePreview && selectedPreviewUrl) {
+        revokeObjectUrl(selectedPreviewUrl);
+        selectedPreviewUrl = '';
+    }
     if (analysisFileInputEl) analysisFileInputEl.value = '';
+    renderSelectedPreviews();
+    syncComposerState();
+    syncAnalysisShellState();
+    renderAnalysisMessages();
+}
+
+function setSelectedFile(file) {
+    if (!isImageFile(file)) return;
+
+    clearSelectedFiles();
+    selectedFiles = [file];
+    selectedPreviewUrl = URL.createObjectURL(file);
+    renderSelectedPreviews();
+    syncComposerState();
+    syncAnalysisShellState();
+    renderAnalysisMessages();
+}
+
+function promoteSelectedPreviewToSessionImage() {
+    if (!selectedPreviewUrl) return;
+
+    setSessionImageUrl(selectedPreviewUrl);
+    selectedPreviewUrl = '';
+    renderSelectedPreviews();
+    syncComposerState();
 }
 
 function renderSelectedPreviews() {
     if (!analysisPreviewsEl) return;
-    analysisPreviewsEl.innerHTML = selectedFiles.map((file, index) => `
-        <div class="relative h-20 w-20 overflow-hidden rounded-xl border border-white/10 shadow-xl group">
-            <img src="${URL.createObjectURL(file)}" class="h-full w-full object-cover transition-transform group-hover:scale-110" />
-            <button type="button" data-remove-index="${index}" class="preview-remove-btn absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-black text-white opacity-0 transition-opacity group-hover:opacity-100" aria-label="Xóa ảnh">×</button>
+    const previewUrl = selectedPreviewUrl;
+    const selectedFile = selectedFiles[0];
+
+    if (!previewUrl) {
+        analysisPreviewsEl.innerHTML = '';
+        analysisPreviewsEl.classList.add('hidden');
+        return;
+    }
+
+    analysisPreviewsEl.classList.remove('hidden');
+    analysisPreviewsEl.innerHTML = `
+        <div class="session-inline-media flex items-center gap-3 rounded-[22px] px-3 py-2.5">
+            <img src="${previewUrl}" alt="Session preview" class="h-14 w-14 shrink-0 rounded-2xl object-cover" />
+            <div class="min-w-0">
+                <p class="truncate text-xs font-bold text-ui-text">
+                    ${selectedFile?.name || 'Sẵn sàng để gửi'}
+                </p>
+                <p class="text-[10px] text-ui-muted/70">
+                    Bạn có thể đổi ảnh trước khi gửi.
+                </p>
+            </div>
+            <button type="button" data-clear-selected-image="true" class="preview-remove-btn ml-auto flex h-8 w-8 items-center justify-center rounded-full text-xs font-black text-white" aria-label="Xóa ảnh đã chọn">×</button>
         </div>
-    `).join('');
+    `;
 }
 
 function handleGlobalPaste(event) {
@@ -736,8 +918,7 @@ function handleGlobalPaste(event) {
     if (pastedImages.length === 0) return;
 
     event.preventDefault();
-    selectedFiles = [pastedImages[0]];
-    renderSelectedPreviews();
+    setSelectedFile(pastedImages[0]);
 }
 
 // ====================== SEND MESSAGE ======================
@@ -755,16 +936,17 @@ async function handleSendMessage() {
     if (!sessionHasImage && filesToSend.length === 0) return;
 
     analysisChatInputEl.value = '';
-    clearSelectedFiles();
+    syncComposerState();
 
-    // Add user message
-    analysisMessages.push({
-        id: Date.now().toString(),
-        sender: 'user',
-        text: text || (filesToSend.length > 0 ? "📷 Đang phân tích ảnh..." : ""),
-        createdAt: Date.now(),
-        imageUrls: filesToSend.map(file => URL.createObjectURL(file))
-    });
+    if (text) {
+        analysisMessages.push({
+            id: Date.now().toString(),
+            sender: 'user',
+            text,
+            createdAt: Date.now(),
+            imageUrls: []
+        });
+    }
 
     // Add thinking message
     analysisMessages.push({
@@ -780,7 +962,7 @@ async function handleSendMessage() {
     if (filesToSend.length > 0) {
         // Image upload flow
         sessionHasImage = true;
-        updateUploadButton();
+        syncComposerState();
 
         try {
             const file = filesToSend[0];
@@ -808,10 +990,13 @@ async function handleSendMessage() {
                     localStorage.setItem('session_id', sessionId);
                     socket.emit('registerSession', { sessionId });
                 }
+                promoteSelectedPreviewToSessionImage();
+                clearSelectedFiles({ preservePreview: true });
             } else {
                 const errData = await uploadRes.json().catch(() => ({}));
                 const lastBot = [...analysisMessages].reverse().find(m => m.sender === 'bot');
                 if (lastBot) lastBot.text = `❌ Lỗi upload: ${errData.message || uploadRes.statusText}`;
+                sessionHasImage = false;
                 unlockChat();
                 renderAnalysisMessages(true);
             }
@@ -820,6 +1005,7 @@ async function handleSendMessage() {
             console.error('Pipeline error:', error);
             const lastBot = [...analysisMessages].reverse().find(m => m.sender === 'bot');
             if (lastBot) lastBot.text = `❌ Lỗi kết nối: ${error.message}`;
+            sessionHasImage = false;
             unlockChat();
             renderAnalysisMessages(true);
         }
@@ -839,25 +1025,79 @@ analysisSendBtnEl?.addEventListener('click', handleSendMessage);
 analysisChatInputEl?.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') handleSendMessage();
 });
-analysisUploadTriggerEl?.addEventListener('click', () => {
-    if (!sessionHasImage && !isProcessing) analysisFileInputEl?.click();
-});
 analysisFileInputEl?.addEventListener('change', (e) => {
     if (sessionHasImage || isProcessing) return;
     const files = Array.from(e.target.files || []).filter(isImageFile);
     if (files.length > 0) {
-        selectedFiles = [files[0]];
-        renderSelectedPreviews();
+        setSelectedFile(files[0]);
     }
     analysisFileInputEl.value = '';
 });
 analysisPreviewsEl?.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-remove-index]');
+    const btn = e.target.closest('[data-clear-selected-image]');
     if (!btn) return;
-    selectedFiles = [];
-    renderSelectedPreviews();
+    clearSelectedFiles();
 });
+
+analysisChatHistoryEl?.addEventListener('click', (e) => {
+    const trigger = e.target.closest('[data-open-upload]');
+    if (!trigger || sessionHasImage || isProcessing) return;
+    analysisFileInputEl?.click();
+});
+
+['dragenter', 'dragover'].forEach(eventName => {
+    analysisChatHistoryEl?.addEventListener(eventName, (event) => {
+        if (!shouldRenderWelcomeState()) return;
+        event.preventDefault();
+        const uploadBox = analysisChatHistoryEl.querySelector('.analysis-empty-state__upload');
+        uploadBox?.classList.add('is-dragover');
+    });
+});
+
+['dragleave', 'dragend', 'drop'].forEach(eventName => {
+    analysisChatHistoryEl?.addEventListener(eventName, (event) => {
+        const uploadBox = analysisChatHistoryEl.querySelector('.analysis-empty-state__upload');
+        if (eventName !== 'dragleave' || event.currentTarget === event.target) {
+            uploadBox?.classList.remove('is-dragover');
+        }
+        if (eventName === 'drop') {
+            if (!shouldRenderWelcomeState()) return;
+            event.preventDefault();
+            const files = Array.from(event.dataTransfer?.files || []).filter(isImageFile);
+            if (files.length > 0) setSelectedFile(files[0]);
+        }
+    });
+});
+
 document.addEventListener('paste', handleGlobalPaste);
+
+analysisChatInputEl?.addEventListener('input', syncComposerState);
+sessionUploadGateEl?.addEventListener('click', () => {
+    if (!sessionHasImage && !isProcessing) analysisFileInputEl?.click();
+});
+
+['dragenter', 'dragover'].forEach(eventName => {
+    sessionUploadGateEl?.addEventListener(eventName, (event) => {
+        if (sessionHasImage || isProcessing) return;
+        event.preventDefault();
+        sessionUploadGateEl.classList.add('is-dragover');
+    });
+});
+
+['dragleave', 'dragend', 'drop'].forEach(eventName => {
+    sessionUploadGateEl?.addEventListener(eventName, (event) => {
+        if (!sessionUploadGateEl) return;
+        if (eventName !== 'dragleave' || event.currentTarget === event.target) {
+            sessionUploadGateEl.classList.remove('is-dragover');
+        }
+        if (eventName === 'drop') {
+            event.preventDefault();
+            if (sessionHasImage || isProcessing) return;
+            const files = Array.from(event.dataTransfer?.files || []).filter(isImageFile);
+            if (files.length > 0) setSelectedFile(files[0]);
+        }
+    });
+});
 
 themeToggleEl?.addEventListener('click', toggleTheme);
 newSessionBtnEl?.addEventListener('click', createNewSession);
@@ -867,6 +1107,8 @@ newSessionBtnEl?.addEventListener('click', createNewSession);
 document.addEventListener('DOMContentLoaded', () => {
     applyTheme();
     switchView('analysis');
+    renderSelectedPreviews();
+    syncComposerState();
 
     if (typeof lucide !== 'undefined') lucide.createIcons();
 
