@@ -30,7 +30,9 @@ export class SegmentationClient {
 
     for (const candidate of candidates) {
       try {
-        this.logger.log(`Triggering segmentation for ${jobId} via ${candidate}`);
+        this.logger.log(
+          `Triggering segmentation for ${jobId} via ${candidate}`,
+        );
         const response = await firstValueFrom(
           this.httpService.post(candidate, payload),
         );
@@ -53,7 +55,8 @@ export class SegmentationClient {
   }
 
   private isNotFound(error: unknown): boolean {
-    const status = (error as { response?: { status?: number } })?.response?.status;
+    const status = (error as { response?: { status?: number } })?.response
+      ?.status;
     return status === 404;
   }
 

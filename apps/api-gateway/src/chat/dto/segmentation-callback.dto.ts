@@ -1,11 +1,18 @@
-import { IsOptional, IsString, IsUUID } from "class-validator";
+import {
+  IsEnum,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from "class-validator";
+import { TaskStatus } from "../../common/task-status";
 
 export class SegmentationCallbackDto {
   @IsUUID()
   job_id: string;
 
-  @IsString()
-  status: string;
+  @IsEnum(TaskStatus)
+  status: TaskStatus;
 
   @IsOptional()
   @IsString()
@@ -20,6 +27,7 @@ export class SegmentationCallbackDto {
   mask_url?: string;
 
   @IsOptional()
+  @IsObject()
   metrics?: Record<string, any>;
 
   @IsOptional()

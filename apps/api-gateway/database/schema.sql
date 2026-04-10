@@ -1,45 +1,70 @@
--- 1. Định nghĩa kiểu ENUM cho trạng thái (Tường minh hơn)
-CREATE TYPE public.task_status AS ENUM (
-  'queued',
-  'processing_segmentation',
-  'success_segmentation',
-  'processing_vlm',
-  'success_vlm',
-  'error'
+create extension if not exists "pgcrypto";
+
+create table if not exists public.sessions (
+  session_id uuid primary key default gen_random_uuid(),
+  context jsonb not null default '{}'::jsonb,
+  last_question text null,
+  last_reply text null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
--- 2. Cập nhật bảng Sessions (Thêm user_id, giữ last_question/reply phục vụ preview)
-CREATE TABLE IF NOT EXISTS public.sessions (
-  session_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id text NULL, -- Thêm cột này (có thể đổi thành uuid REFERENCES users nếu có bảng users)
-  context jsonb NOT NULL DEFAULT '{}'::jsonb,
-  history jsonb NOT NULL DEFAULT '[]'::jsonb,
-  last_question text NULL, -- Giữ lại nếu cần làm Sidebar hiển thị preview
-  last_reply text NULL,    -- Giữ lại nếu cần làm Sidebar hiển thị preview
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+create table if not exists public.task_image (
+  job_id uuid primary key references public.task_reasoning (job_id) on delete cascade,
+  session_id uuid not null references public.sessions (session_id) on delete cascade,
+  image_url text not null,
+  status text not null check (
+    status in (
+      'queued',
+      'processing_segmentation',
+      'success_segmentation',
+      'error'
+    )
+  ),
+  mask_all_overlay text null,
+  metrics jsonb null,
+  error_code text null,
+  error_message text null,
+  segmentation_callback_at timestamptz null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
--- Index để tìm nhanh session của một user cụ thể
-CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON public.sessions (user_id);
-
--- 3. Cập nhật bảng Tasks (Sử dụng ENUM)
-CREATE TABLE IF NOT EXISTS public.tasks (
-  job_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  session_id uuid NOT NULL REFERENCES public.sessions (session_id) ON DELETE CASCADE,
-  image_url text NOT NULL,
-  status public.task_status NOT NULL DEFAULT 'queued',
-  question text NULL,
-  mask_all_overlay text NULL,
-  
-  -- CỘT MỚI ĐƯỢC THÊM VÀO ĐỂ LƯU KẾT QUẢ TỪ PYTHON WORKER
-  metrics jsonb NULL DEFAULT '{}'::jsonb, 
-  
-  vlm_analysis text NULL,
-  error_code text NULL,
-  error_message text NULL,
-  segmentation_callback_at timestamptz NULL,
-  vlm_callback_at timestamptz NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+create table if not exists public.task_reasoning (
+  job_id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references public.sessions (session_id) on delete cascade,
+  status text not null check (
+    status in (
+      'queued',
+      'processing_segmentation',
+      'success_segmentation',
+      'processing_vlm',
+      'success_vlm',
+      'error'
+    )
+  ),
+  question text null,
+  vlm_analysis text null,
+  error_code text null,
+  error_message text null,
+  vlm_callback_at timestamptz null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
+
+create table if not exists public.session_history (
+  history_id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references public.sessions (session_id) on delete cascade,
+  reasoning_task_id uuid null references public.task_reasoning (job_id) on delete set null,
+  role text not null check (role in ('user', 'assistant')),
+  content text not null,
+  image_urls jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_task_reasoning_session_id on public.task_reasoning (session_id);
+create index if not exists idx_task_reasoning_status on public.task_reasoning (status);
+create index if not exists idx_task_image_session_id on public.task_image (session_id);
+create index if not exists idx_session_history_session_id on public.session_history (session_id);
+create index if not exists idx_session_history_reasoning_task_id on public.session_history (reasoning_task_id);
+create index if not exists idx_sessions_updated_at on public.sessions (updated_at desc);

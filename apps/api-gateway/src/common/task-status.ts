@@ -8,7 +8,11 @@ export enum TaskStatus {
 }
 
 const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
-  [TaskStatus.Queued]: [TaskStatus.ProcessingSegmentation, TaskStatus.Error],
+  [TaskStatus.Queued]: [
+    TaskStatus.ProcessingSegmentation,
+    TaskStatus.ProcessingVlm,
+    TaskStatus.Error,
+  ],
   [TaskStatus.ProcessingSegmentation]: [
     TaskStatus.SuccessSegmentation,
     TaskStatus.Error,

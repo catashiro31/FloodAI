@@ -1,4 +1,5 @@
 import { Test } from "@nestjs/testing";
+import { BadRequestException } from "@nestjs/common";
 import { TaskStatus } from "../common/task-status";
 import { ConversationService } from "../conversation/conversation.service";
 import { OrchestrationService } from "../orchestration/orchestration.service";
@@ -11,6 +12,7 @@ describe("ChatService", () => {
 
   const tasksService = {
     createTaskFromUpload: jest.fn(),
+    createReasoningTask: jest.fn(),
     setError: jest.fn(),
     setSegmentationSuccess: jest.fn(),
     setVlmSuccess: jest.fn(),
@@ -76,8 +78,13 @@ describe("ChatService", () => {
     expect(tasksService.createTaskFromUpload).toHaveBeenCalled();
     expect(conversationService.ensureSession).toHaveBeenCalledWith(
       "11111111-1111-1111-1111-111111111111",
+    );
+    expect(conversationService.recordUserMessage).toHaveBeenCalledWith(
+      "11111111-1111-1111-1111-111111111111",
       "job-1",
       "Muc nuoc o dau cao nhat?",
+      false,
+      ["https://example.com/image.png"],
     );
     expect(realtimeService.registerSessionClient).toHaveBeenCalledWith(
       "11111111-1111-1111-1111-111111111111",
@@ -86,10 +93,28 @@ describe("ChatService", () => {
     expect(orchestrationService.triggerSegmentation).toHaveBeenCalled();
     expect(result).toEqual({
       jobId: "job-1",
+      reasoningTaskId: "job-1",
       sessionId: "11111111-1111-1111-1111-111111111111",
       status: TaskStatus.Queued,
       imageUrl: "https://example.com/image.png",
     });
+  });
+
+  it("rejects unsupported upload mime types before creating a task", async () => {
+    await expect(
+      service.handleUpload(
+        {
+          buffer: Buffer.from("x"),
+          mimetype: "application/pdf",
+        } as Express.Multer.File,
+        {},
+        "client-1",
+        "11111111-1111-1111-1111-111111111111",
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(tasksService.createTaskFromUpload).not.toHaveBeenCalled();
+    expect(orchestrationService.triggerSegmentation).not.toHaveBeenCalled();
   });
 
   it("marks the task as error when segmentation callback fails", async () => {
@@ -139,10 +164,11 @@ describe("ChatService", () => {
     expect(tasksService.setSegmentationSuccess).toHaveBeenCalledWith(
       "job-1",
       "https://example.com/mask.png",
+      null,
     );
     expect(orchestrationService.enqueueVlm).toHaveBeenCalledWith(
       expect.objectContaining({ job_id: "job-1" }),
-      "",
+      "Summarize the flood risk",
       false,
       "client-1",
     );
@@ -192,7 +218,6 @@ describe("ChatService", () => {
     expect(tasksService.setVlmSuccess).toHaveBeenCalledWith(
       "job-1",
       "High flood depth around the southern road.",
-      "11111111-1111-1111-1111-111111111111",
     );
     expect(conversationService.recordAssistantResponse).toHaveBeenCalled();
     expect(realtimeService.sendReply).toHaveBeenCalledWith(
@@ -262,6 +287,7 @@ describe("ChatService", () => {
         reply: "Final report",
         session: expect.objectContaining({
           session_id: "11111111-1111-1111-1111-111111111111",
+          sessionId: "11111111-1111-1111-1111-111111111111",
         }),
       }),
     );
@@ -271,6 +297,12 @@ describe("ChatService", () => {
     tasksService.getTask.mockResolvedValue({
       job_id: "job-2",
       session_id: "22222222-2222-2222-2222-222222222222",
+    });
+    tasksService.createReasoningTask.mockResolvedValue({
+      job_id: "job-3",
+      session_id: "22222222-2222-2222-2222-222222222222",
+      image_url: "https://example.com/image.png",
+      status: TaskStatus.Queued,
     });
 
     const result = await service.handleHttpMessage({
@@ -282,11 +314,61 @@ describe("ChatService", () => {
 
     expect(conversationService.recordUserMessage).toHaveBeenCalledWith(
       "22222222-2222-2222-2222-222222222222",
-      "job-2",
+      "job-3",
       "Can you focus on the eastern bridge?",
       false,
     );
-    expect(orchestrationService.enqueueVlm).toHaveBeenCalled();
+    expect(orchestrationService.enqueueVlm).toHaveBeenCalledWith(
+      expect.objectContaining({ job_id: "job-3" }),
+      "Can you focus on the eastern bridge?",
+      false,
+      undefined,
+    );
+    expect(tasksService.createReasoningTask).toHaveBeenCalledWith(
+      "22222222-2222-2222-2222-222222222222",
+      "Can you focus on the eastern bridge?",
+      "job-2",
+    );
+    expect(result.jobId).toBe("job-3");
     expect(result.queued).toBe(true);
+  });
+
+  it("rejects follow-up questions when jobId does not belong to the provided sessionId", async () => {
+    tasksService.getTask.mockResolvedValue({
+      job_id: "job-2",
+      session_id: "33333333-3333-3333-3333-333333333333",
+    });
+
+    await expect(
+      service.handleHttpMessage({
+        message: "Can you focus on the eastern bridge?",
+        jobId: "job-2",
+        sessionId: "22222222-2222-2222-2222-222222222222",
+        reset: false,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(tasksService.createReasoningTask).not.toHaveBeenCalled();
+    expect(orchestrationService.enqueueVlm).not.toHaveBeenCalled();
+  });
+
+  it("rejects vlm callbacks when the payload sessionId does not match the stored task owner", async () => {
+    tasksService.getTask.mockResolvedValue({
+      job_id: "job-1",
+      session_id: "11111111-1111-1111-1111-111111111111",
+      status: TaskStatus.ProcessingVlm,
+    });
+
+    await expect(
+      service.handleVlmWebhook({
+        job_id: "job-1",
+        session_id: "22222222-2222-2222-2222-222222222222",
+        status: TaskStatus.SuccessVlm,
+        reply: "High flood depth around the southern road.",
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(tasksService.setVlmSuccess).not.toHaveBeenCalled();
+    expect(conversationService.recordAssistantResponse).not.toHaveBeenCalled();
   });
 });
