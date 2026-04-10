@@ -4,10 +4,13 @@ import torch.nn.functional as F
 import sys
 import os
 
-# Import từ thư mục cha
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from model.model import HeavyGLNet
-from model.upernet import UperNetHead
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, '..'))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+    
+from FloodAI.model.model import HeavyGLNet
+from FloodAI.model.upernet import UperNetHead
 
 class FloodWizSSL(HeavyGLNet):
     def __init__(self, num_classes, backbone_name, drop_path_rate=0.2):

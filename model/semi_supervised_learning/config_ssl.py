@@ -2,9 +2,12 @@ import torch
 import sys
 import os
 
-# Cho phép import từ thư mục cha
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from model.config import Config
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, '..'))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+from FloodAI.model.config import Config
 
 class SSLConfig(Config):
     # Đường dẫn dữ liệu không nhãn
