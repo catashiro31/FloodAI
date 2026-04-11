@@ -68,7 +68,7 @@ export class RealtimeService {
       this.server.to(sessionId).emit("uploadStatus", payload);
     }
 
-    if (clientId) {
+    if (clientId && this.shouldEmitDirectly(clientId, sessionId)) {
       this.server.to(clientId).emit("uploadStatus", payload);
     }
   }
@@ -91,8 +91,17 @@ export class RealtimeService {
       this.server.to(sessionId).emit("receiveMessage", replyPayload);
     }
 
-    if (clientId) {
+    if (clientId && this.shouldEmitDirectly(clientId, sessionId)) {
       this.server.to(clientId).emit("receiveMessage", replyPayload);
     }
+  }
+
+  private shouldEmitDirectly(clientId: string, sessionId?: string) {
+    if (!sessionId || !this.server) {
+      return true;
+    }
+
+    const socket = this.server.sockets.sockets.get(clientId);
+    return !socket?.rooms?.has(sessionId);
   }
 }

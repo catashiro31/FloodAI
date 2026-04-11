@@ -55,11 +55,14 @@ export class VlmClient {
       }
     }
 
-    throw lastError instanceof Error ? lastError : new Error("VLM request failed");
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("VLM request failed");
   }
 
   private isNotFound(error: unknown): boolean {
-    const status = (error as { response?: { status?: number } })?.response?.status;
+    const status = (error as { response?: { status?: number } })?.response
+      ?.status;
     return status === 404;
   }
 

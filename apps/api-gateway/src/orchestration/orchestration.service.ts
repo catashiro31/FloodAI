@@ -35,8 +35,9 @@ export class OrchestrationService {
       );
 
       await this.segmentationClient.trigger(
-        task.job_id,
+        task.session_id,
         this.buildCallbackUrl("/chat/webhook/segmentation"),
+        this.buildCallbackUrl("/chat/webhook/progress"),
       );
     } catch (error) {
       const message =
@@ -108,7 +109,15 @@ export class OrchestrationService {
     const baseUrl =
       this.configService.get<string>("GATEWAY_BASE_URL") ||
       "http://localhost:5000";
+    const webhookSecret =
+      this.configService.get<string>("WORKER_WEBHOOK_SECRET") ||
+      this.configService.get<string>("WEBHOOK_SECRET");
 
-    return `${baseUrl}${pathname}`;
+    const callbackUrl = new URL(`${baseUrl}${pathname}`);
+    if (webhookSecret) {
+      callbackUrl.searchParams.set("token", webhookSecret);
+    }
+
+    return callbackUrl.toString();
   }
 }

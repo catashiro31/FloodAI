@@ -1,23 +1,48 @@
 import { Injectable } from "@nestjs/common";
+import { SessionHistoryRecord, SessionRecord } from "../tasks/task.types";
 import { TasksRepository } from "../tasks/tasks.repository";
-import { SessionHistoryItem } from "../tasks/task.types";
 
 @Injectable()
 export class ConversationService {
   constructor(private readonly repository: TasksRepository) {}
 
   async getSession(sessionId: string) {
-    return this.repository.getSession(sessionId);
+    const [session, imageTask, reasoningTasks, history] = await Promise.all([
+      this.repository.getSession(sessionId),
+      this.repository.getLatestImageTaskBySession(sessionId),
+      this.repository.listReasoningTasksBySession(sessionId),
+      this.repository.listHistoryBySession(sessionId),
+    ]);
+
+    if (!session) {
+      return null;
+    }
+
+    return {
+      ...session,
+      image_task: imageTask,
+      reasoning_tasks: reasoningTasks,
+      history,
+      history_count: history.length,
+    } satisfies SessionRecord;
   }
 
   async listSessions(limit = 50) {
-    return this.repository.listSessions(limit);
+    const sessions = await this.repository.listSessions(limit);
+    const historyCounts = await this.repository.countHistoryBySessionIds(
+      sessions.map((session) => session.session_id),
+    );
+
+    return sessions.map((session) => ({
+      ...session,
+      history_count: historyCounts.get(session.session_id) ?? 0,
+    }));
   }
 
   async ensureSession(
     sessionId: string,
-    jobId: string,
     initialQuestion?: string,
+    imageUrls?: string[],
   ) {
     const existing = await this.repository.getSession(sessionId);
 
@@ -25,17 +50,12 @@ export class ConversationService {
       return existing;
     }
 
-    const history = initialQuestion
-      ? [this.createHistoryItem("user", initialQuestion)]
-      : [];
-
     return this.repository.upsertSession({
       session_id: sessionId,
-      job_id: jobId,
       context: {
         initialQuestion: initialQuestion?.trim() || null,
+        initialImageUrls: imageUrls || [],
       },
-      history,
       last_question: initialQuestion?.trim() || null,
       last_reply: null,
     });
@@ -46,19 +66,24 @@ export class ConversationService {
     jobId: string,
     message: string,
     reset = false,
+    imageUrls?: string[],
   ) {
     const session = await this.repository.getSession(sessionId);
-    const history = reset ? [] : session?.history || [];
-    const nextHistory = [...history, this.createHistoryItem("user", message)];
+
+    if (reset) {
+      await this.repository.deleteHistoryBySession(sessionId);
+    }
+
+    await this.repository.createHistoryEntry(
+      this.createHistoryItem(sessionId, jobId, "user", message, imageUrls),
+    );
 
     return this.repository.upsertSession({
       session_id: sessionId,
-      job_id: jobId,
       context: {
         ...(session?.context || {}),
         reset,
       },
-      history: nextHistory,
       last_question: message,
       last_reply: reset ? null : session?.last_reply || null,
     });
@@ -69,16 +94,13 @@ export class ConversationService {
     jobId: string,
     reply: string,
     context?: Record<string, unknown>,
-    history?: SessionHistoryItem[],
+    imageUrls?: string[],
   ) {
     const session = await this.repository.getSession(sessionId);
-    const nextHistory =
-      history && history.length
-        ? history
-        : [
-            ...(session?.history || []),
-            this.createHistoryItem("assistant", reply),
-          ];
+
+    await this.repository.createHistoryEntry(
+      this.createHistoryItem(sessionId, jobId, "assistant", reply, imageUrls),
+    );
 
     const nextContext = {
       ...(session?.context || {}),
@@ -88,22 +110,26 @@ export class ConversationService {
 
     return this.repository.upsertSession({
       session_id: sessionId,
-      job_id: jobId,
       context: nextContext,
-      history: nextHistory,
       last_question: session?.last_question || null,
       last_reply: reply,
     });
   }
 
   private createHistoryItem(
-    role: SessionHistoryItem["role"],
+    sessionId: string,
+    reasoningTaskId: string,
+    role: SessionHistoryRecord["role"],
     content: string,
-  ): SessionHistoryItem {
+    imageUrls?: string[],
+  ): Omit<SessionHistoryRecord, "history_id"> {
     return {
+      session_id: sessionId,
+      reasoning_task_id: reasoningTaskId,
       role,
       content,
-      createdAt: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      image_urls: imageUrls || [],
     };
   }
 }

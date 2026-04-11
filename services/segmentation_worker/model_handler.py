@@ -1,28 +1,82 @@
+from __future__ import annotations
+
+import json
 import os
-import time
-import torch
+import sys
 import tempfile
-from typing import Dict
+import time
+from pathlib import Path
+from typing import Any, Dict
+
+from dotenv import load_dotenv
 import requests
+from huggingface_hub import hf_hub_download, snapshot_download
 
-from inference import Config, ComprehensiveVisualizer
-from file_handler import get_filename_from_url
-from db_handler import TABLE_NAME, BUCKET_NAME, get_data, update_data, upload_image_to_bucket
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
 
-MODEL_WEIGHT = "./best_heavy_hybrid_glnet.pth"
-important_class = [1, 3]
+from utils.segmentation.db_handler import (
+    MASK_BUCKET_NAME,
+    TABLE_NAME,
+    get_data,
+    update_data,
+    upload_image_to_bucket,
+)
 
+load_dotenv(Path(__file__).with_name(".env"))
+
+
+important_class = list(range(1, 10))
 job_status: Dict[str, dict] = {}
 
+# load model form huggingface
+# hf_repo = os.getenv("HUGGINGFACE_REPO", "Hoangphii/flood-segmentation-ssl")
+# hf_model_filename = os.getenv("HUGGINGFACE_MODEL_FILENAME", "best_ssl_model.pth")
+
+# def get_model(repo_id: str, filename: str) -> str | None:
+#     try:
+#         return hf_hub_download(repo_id=repo_id, filename=filename)
+#     except Exception as exc:
+#         print(f"hf_hub_download failed for {repo_id}/{filename}: {exc}")
+
+#     try:
+#         snapshot_dir = snapshot_download(repo_id=repo_id, allow_patterns="*.pth")
+#         exact_path = os.path.join(snapshot_dir, filename)
+#         if os.path.exists(exact_path):
+#             return exact_path
+
+#         pth_files: list[str] = []
+#         for root, _dirs, files in os.walk(snapshot_dir):
+#             for file_name in files:
+#                 if file_name.endswith(".pth"):
+#                     pth_files.append(os.path.join(root, file_name))
+#         if pth_files:
+#             return sorted(pth_files)[0]
+#     except Exception as exc:
+#         print(f"snapshot_download failed for {repo_id}: {exc}")
+
+#     return None
 
 def load_model():
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    try:
-        predictor = ComprehensiveVisualizer(MODEL_WEIGHT, Config, device)
-        return predictor
-    except Exception as e:
-        print(f"❌ Can't load model: {e}")
+    import torch
+    from services.segmentation_worker.inference import Config, ComprehensiveVisualizer
+
+    # model_weight = get_model(hf_repo, hf_model_filename)
+    
+    model_weight = os.getenv("MODEL_WEIGHT")
+    if not model_weight:
+        print("No model weight available from Hugging Face.")
         return None
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    try:
+        predictor = ComprehensiveVisualizer(model_weight, Config, device)
+        return predictor
+    except Exception as exc:
+        print(f"Can't load segmentation model: {exc}")
+        return None
+
 
 def send_segmentation_callback(callback_url: str, payload: dict) -> None:
     if not callback_url:
@@ -31,34 +85,53 @@ def send_segmentation_callback(callback_url: str, payload: dict) -> None:
         response = requests.post(callback_url, json=payload, timeout=15)
         response.raise_for_status()
     except Exception as exc:
-        print(f"⚠️ Failed to send segmentation callback: {exc}")
+        print(f"Failed to send segmentation callback: {exc}")
 
 
 def run_segmentation_task(
-    predictor: ComprehensiveVisualizer,
-    job_id: str,
+    predictor: Any,
+    session_id: str,
     callback_url: str = "",
+    progress_url: str = "",
 ):
     temp_path = None
 
-    try:
-        job_status[job_id] = {
-            "status": "processing(segmentation)",
-            "start_time": time.time(),
-        }  
-        update_data("status", "processing(segmentation)", TABLE_NAME, "job_id", job_id)
+    def on_progress(percent, est_remaining):
+        if not progress_url:
+            return
+        try:
+            requests.post(
+                progress_url,
+                json={
+                    "session_id": session_id,
+                    "status": "processing_segmentation",
+                    "progress": percent,
+                    "est_seconds_remaining": est_remaining,
+                },
+                timeout=2,
+            )
+        except Exception:
+            pass
 
-        data = get_data(job_id)
+    try:
+        job_status[session_id] = {
+            "session_id": session_id,
+            "status": "processing_segmentation",
+            "start_time": time.time(),
+        }
+        update_data("status", "processing_segmentation", TABLE_NAME, "session_id", session_id)
+
+        data = get_data(session_id)
         if not data:
-            error_message = "job_id not found in database"
-            job_status[job_id].update({"status": "error", "error": error_message})
-            update_data("status", "error", TABLE_NAME, "job_id", job_id)
-            update_data("error_code", "SEGMENTATION_JOB_NOT_FOUND", TABLE_NAME, "job_id", job_id)
-            update_data("error_message", error_message, TABLE_NAME, "job_id", job_id)
+            error_message = "session_id not found in database"
+            job_status[session_id].update({"status": "error", "error": error_message})
+            update_data("status", "error", TABLE_NAME, "session_id", session_id)
+            update_data("error_code", "SEGMENTATION_JOB_NOT_FOUND", TABLE_NAME, "session_id", session_id)
+            update_data("error_message", error_message, TABLE_NAME, "session_id", session_id)
             send_segmentation_callback(
                 callback_url,
                 {
-                    "job_id": job_id,
+                    "session_id": session_id,
                     "status": "error",
                     "error_code": "SEGMENTATION_JOB_NOT_FOUND",
                     "error_message": error_message,
@@ -68,15 +141,15 @@ def run_segmentation_task(
 
         image_source = data[0].get("image_url") or data[0].get("url_image")
         if not image_source:
-            error_message = "Image URL not found for this job_id"
-            job_status[job_id].update({"status": "error", "error": error_message})
-            update_data("status", "error", TABLE_NAME, "job_id", job_id)
-            update_data("error_code", "SEGMENTATION_IMAGE_URL_MISSING", TABLE_NAME, "job_id", job_id)
-            update_data("error_message", error_message, TABLE_NAME, "job_id", job_id)
+            error_message = "Image URL not found for this session_id"
+            job_status[session_id].update({"status": "error", "error": error_message})
+            update_data("status", "error", TABLE_NAME, "session_id", session_id)
+            update_data("error_code", "SEGMENTATION_IMAGE_URL_MISSING", TABLE_NAME, "session_id", session_id)
+            update_data("error_message", error_message, TABLE_NAME, "session_id", session_id)
             send_segmentation_callback(
                 callback_url,
                 {
-                    "job_id": job_id,
+                    "session_id": session_id,
                     "status": "error",
                     "error_code": "SEGMENTATION_IMAGE_URL_MISSING",
                     "error_message": error_message,
@@ -86,38 +159,40 @@ def run_segmentation_task(
 
         response = requests.get(image_source, timeout=30)
         if response.status_code != 200:
-            error_message = "Failed to download image"
-            job_status[job_id].update({"status": "error", "error": error_message})
-            update_data("status", "error", TABLE_NAME, "job_id", job_id)
-            update_data("error_code", "SEGMENTATION_IMAGE_DOWNLOAD_FAILED", TABLE_NAME, "job_id", job_id)
-            update_data("error_message", error_message, TABLE_NAME, "job_id", job_id)
+            error_message = f"Failed to download image from {image_source}"
+            job_status[session_id].update({"status": "error", "error": error_message})
+            update_data("status", "error", TABLE_NAME, "session_id", session_id)
+            update_data("error_code", "SEGMENTATION_IMAGE_DOWNLOAD_FAILED", TABLE_NAME, "session_id", session_id)
+            update_data("error_message", error_message, TABLE_NAME, "session_id", session_id)
             send_segmentation_callback(
                 callback_url,
                 {
-                    "job_id": job_id,
+                    "session_id": session_id,
                     "status": "error",
                     "error_code": "SEGMENTATION_IMAGE_DOWNLOAD_FAILED",
                     "error_message": error_message,
                 },
             )
             return None
-        
+        image_content = response.content
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-            tmp.write(response.content)
+            tmp.write(image_content)
             temp_path = tmp.name
-        
-        result = predictor.visualize_all(temp_path, important_class)
-        overlay_content = result.get("mask_all_overlay")
-        if not overlay_content:
-            error_message = "Segmentation output missing mask_all_overlay"
-            job_status[job_id].update({"status": "error", "error": error_message})
-            update_data("status", "error", TABLE_NAME, "job_id", job_id)
-            update_data("error_code", "SEGMENTATION_MASK_MISSING", TABLE_NAME, "job_id", job_id)
-            update_data("error_message", error_message, TABLE_NAME, "job_id", job_id)
+
+        result = predictor.visualize_all(temp_path, important_class, progress_callback=on_progress)
+        mask = result.get("mask", "")
+        metrics = result.get("metrics", {})
+        if not mask:
+            error_message = "Segmentation output missing mask"
+            job_status[session_id].update({"status": "error", "error": error_message})
+            update_data("status", "error", TABLE_NAME, "session_id", session_id)
+            update_data("error_code", "SEGMENTATION_MASK_MISSING", TABLE_NAME, "session_id", session_id)
+            update_data("error_message", error_message, TABLE_NAME, "session_id", session_id)
             send_segmentation_callback(
                 callback_url,
                 {
-                    "job_id": job_id,
+                    "session_id": session_id,
                     "status": "error",
                     "error_code": "SEGMENTATION_MASK_MISSING",
                     "error_message": error_message,
@@ -125,62 +200,62 @@ def run_segmentation_task(
             )
             return None
 
-        image_name = get_filename_from_url(image_source)
-        image_name = f"{image_name}_mask_all_overlay.png"
-        mask_all_overlay_url = upload_image_to_bucket(image_name, overlay_content, BUCKET_NAME)
-        if not mask_all_overlay_url:
-            error_message = "Failed to upload mask_all_overlay to storage"
-            job_status[job_id].update({"status": "error", "error": error_message})
-            update_data("status", "error", TABLE_NAME, "job_id", job_id)
-            update_data("error_code", "SEGMENTATION_UPLOAD_FAILED", TABLE_NAME, "job_id", job_id)
-            update_data("error_message", error_message, TABLE_NAME, "job_id", job_id)
+        mask_filename = f"{session_id}_mask.png"
+        mask_url = upload_image_to_bucket(mask_filename, mask, MASK_BUCKET_NAME)
+        if not mask_url:
+            error_message = "Failed to upload segmentation mask to storage"
+            job_status[session_id].update({"status": "error", "error": error_message})
+            update_data("status", "error", TABLE_NAME, "session_id", session_id)
+            update_data("error_code", "SEGMENTATION_MASK_UPLOAD_FAILED", TABLE_NAME, "session_id", session_id)
+            update_data("error_message", error_message, TABLE_NAME, "session_id", session_id)
             send_segmentation_callback(
                 callback_url,
                 {
-                    "job_id": job_id,
+                    "session_id": session_id,
                     "status": "error",
-                    "error_code": "SEGMENTATION_UPLOAD_FAILED",
+                    "error_code": "SEGMENTATION_MASK_UPLOAD_FAILED",
                     "error_message": error_message,
                 },
             )
             return None
 
-        update_data("mask_all_overlay", mask_all_overlay_url, TABLE_NAME, "job_id", job_id)
-        update_data("status", "success(segmentation)", TABLE_NAME, "job_id", job_id)
-        update_data("error_code", None, TABLE_NAME, "job_id", job_id)
-        update_data("error_message", None, TABLE_NAME, "job_id", job_id)
+        update_data("mask_url", mask_url, TABLE_NAME, "session_id", session_id)
+        update_data("status", "success_segmentation", TABLE_NAME, "session_id", session_id)
+        update_data("error_code", None, TABLE_NAME, "session_id", session_id)
+        update_data("error_message", None, TABLE_NAME, "session_id", session_id)
+        update_data("metrics", json.dumps(metrics), TABLE_NAME, "session_id", session_id)
 
-        job_status[job_id].update({
-            "status": "success(segmentation)",
-            "mask_all_overlay": mask_all_overlay_url,
-            "end_time": time.time(),
-            "duration": time.time() - job_status[job_id]["start_time"]
-        })
-        send_segmentation_callback(
-            callback_url,
+        end_time = time.time()
+        job_status[session_id].update(
             {
-                "job_id": job_id,
-                "status": "success(segmentation)",
-                "mask_all_overlay": mask_all_overlay_url,
-                "mask_url": mask_all_overlay_url,
-            },
+                "session_id": session_id,
+                "status": "success_segmentation",
+                "mask_url": mask_url,
+                "metrics": metrics,
+                "end_time": end_time,
+                "duration": end_time - job_status[session_id]["start_time"],
+            }
         )
-
-
-    except Exception as e:
-        job_status[job_id].update({"status": "error", "error": str(e)})
-        update_data("status", "error", TABLE_NAME, "job_id", job_id)
-        update_data("error_code", "SEGMENTATION_INTERNAL_ERROR", TABLE_NAME, "job_id", job_id)
-        update_data("error_message", str(e), TABLE_NAME, "job_id", job_id)
+        send_segmentation_callback(callback_url, job_status[session_id])
+        return mask_url
+    
+    except Exception as exc:
+        if session_id not in job_status:
+            job_status[session_id] = {"session_id": session_id}
+        job_status[session_id].update({"status": "error", "error": str(exc)})
+        update_data("status", "error", TABLE_NAME, "session_id", session_id)
+        update_data("error_code", "SEGMENTATION_INTERNAL_ERROR", TABLE_NAME, "session_id", session_id)
+        update_data("error_message", str(exc), TABLE_NAME, "session_id", session_id)
         send_segmentation_callback(
             callback_url,
             {
-                "job_id": job_id,
+                "session_id": session_id,
                 "status": "error",
                 "error_code": "SEGMENTATION_INTERNAL_ERROR",
-                "error_message": str(e),
+                "error_message": str(exc),
             },
         )
+        return None
     finally:
         if temp_path and os.path.exists(temp_path):
             try:

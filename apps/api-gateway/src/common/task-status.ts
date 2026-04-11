@@ -1,14 +1,18 @@
 export enum TaskStatus {
   Queued = "queued",
-  ProcessingSegmentation = "processing(segmentation)",
-  SuccessSegmentation = "success(segmentation)",
-  ProcessingVlm = "processing(vlm)",
-  SuccessVlm = "success(vlm)",
+  ProcessingSegmentation = "processing_segmentation",
+  SuccessSegmentation = "success_segmentation",
+  ProcessingVlm = "processing_vlm",
+  SuccessVlm = "success_vlm",
   Error = "error",
 }
 
 const ALLOWED_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
-  [TaskStatus.Queued]: [TaskStatus.ProcessingSegmentation, TaskStatus.Error],
+  [TaskStatus.Queued]: [
+    TaskStatus.ProcessingSegmentation,
+    TaskStatus.ProcessingVlm,
+    TaskStatus.Error,
+  ],
   [TaskStatus.ProcessingSegmentation]: [
     TaskStatus.SuccessSegmentation,
     TaskStatus.Error,

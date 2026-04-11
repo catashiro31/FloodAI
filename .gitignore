@@ -1,48 +1,101 @@
-# 1. Dữ liệu và Kết quả Thí nghiệm (Quan trọng nhất)
-# Bỏ qua toàn bộ thư mục chứa dữ liệu và kết quả huấn luyện.
-# Chúng thường rất lớn và không nên đưa lên Git.
+# --- Hệ thống và IDE ---
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+**/uploads/
+!**/uploads/.gitkeep
+
+# --- Node.js ---
+node_modules/
+/dist/
+dist/
+lib-cov
+plugin_jscoverage
+.expected
+/coverage
+.nyc_output
+.eslintcache
+.stylelintcache
+.prettiercache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn-integrity
+package-lock.json.tmp
+# Commit lockfile để đồng bộ môi trường
+# package-lock.json
+
+# --- TypeScript ---
+*.tsbuildinfo
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# --- Dữ liệu và Mô hình (Dự án cụ thể) ---
 data/
 experiments/
-
-# Bỏ qua các file model đã được huấn luyện nếu chúng nằm đâu đó ngoài experiments
 qwen2-quant/
 *.pth
 *.h5
 *.onnx
+*.weights
+*.pt
 
-# 2. Môi trường ảo Python
-# Thư mục môi trường ảo chứa hàng ngàn file và có thể được tạo lại từ requirements.txt
-env/
-venv/
-.venv/
+# Ngoại lệ: Cho phép commit model chính và database
+!apps/api-gateway/database/
 
-# 3. Cache và các file biên dịch của Python
-# Các file này được Python tự động tạo ra để tăng tốc độ thực thi
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# 4. Cấu hình của Trình soạn thảo Code (IDE)
-# Các file này chứa cài đặt cá nhân của mỗi thành viên, không nên chia sẻ
-.vscode/
-.idea/
-
-# 5. Jupyter Notebook
-# Bỏ qua thư mục checkpoint mà Jupyter tự tạo
-.ipynb_checkpoints/
-
-# 6. Các file tạm của Hệ điều hành
-# Các file ẩn do macOS hoặc Windows tạo ra
-.DS_Store
-Thumbs.db
-
-# 7. File chứa thông tin nhạy cảm (Secrets)
-# Rất quan trọng: Không bao giờ commit các file chứa mật khẩu, API key
+# --- Bảo mật và Cấu hình Nhạy cảm ---
 .env
 *.env
+.env.local
+.env.*.local
+.netrc
+.npmrc
+# Khóa cấu hình ngrok cá nhân
+ngrok.yml
 
-# 8. Logs
-# Bỏ qua các file log tự tạo
+# Ngoại lệ: Cấu hình mặc định cho Docker 
+!.env.docker
+
+# --- Logs và Tạm thời ---
 *.log
 logs/
+/tmp/
+temp/
+
+# --- Docker Persistence ---
+ollama_data/
+
+# --- Agentic Coding --
+.omx/
+.codex/

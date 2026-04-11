@@ -1,4 +1,4 @@
-import os
+import os, sys
 import glob
 import numpy as np
 import torch
@@ -6,11 +6,17 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from model.config import Config
-from model.dataloader import FloodNetHeavyDataset
-from model.model import HeavyGLNet
-from model.loss import JointLoss
-from model.utils import seed_everything, seed_worker, train_one_epoch
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, '..'))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+from FloodAI.model.config import Config
+from FloodAI.model.dataloader import FloodNetHeavyDataset
+from FloodAI.model.model import HeavyGLNet
+from FloodAI.model.loss import JointLoss
+from FloodAI.model.utils import seed_everything, seed_worker, train_one_epoch
 
 def main():
     seed_everything()

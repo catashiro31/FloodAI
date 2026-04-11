@@ -18,6 +18,11 @@ import { VlmCallbackDto } from "./dto/vlm-callback.dto";
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
+  private static readonly ALLOWED_UPLOAD_MIME_TYPES = new Set([
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+  ]);
 
   constructor(
     private readonly tasksService: TasksService,
@@ -40,22 +45,28 @@ export class ChatService {
     clientId?: string,
     sessionId?: string,
   ) {
-    if (!file) {
-      throw new BadRequestException("file is required");
-    }
+    this.assertValidUpload(file);
 
     const effectiveSessionId =
       sessionId || body.sessionId || crypto.randomUUID();
+
+    // Tạo session trước để thỏa mãn ràng buộc khóa ngoại (không kèm câu hỏi để tránh lặp)
+    await this.conversationService.ensureSession(effectiveSessionId);
+
     const task = await this.tasksService.createTaskFromUpload({
       file,
       sessionId: effectiveSessionId,
       question: body.question,
     });
+    const uploadedImageUrls = task.image_url ? [task.image_url] : [];
 
-    await this.conversationService.ensureSession(
+    // Ghi lại tin nhắn của người dùng kèm với ảnh đã được upload thành công
+    await this.conversationService.recordUserMessage(
       effectiveSessionId,
       task.job_id,
-      body.question,
+      body.question || "Phân tích ảnh này",
+      false,
+      uploadedImageUrls,
     );
     this.realtimeService.registerSessionClient(effectiveSessionId, clientId);
     this.realtimeService.registerTaskClient(task.job_id, clientId);
@@ -73,6 +84,7 @@ export class ChatService {
 
     return {
       jobId: task.job_id,
+      reasoningTaskId: task.job_id,
       sessionId: effectiveSessionId,
       status: TaskStatus.Queued,
       imageUrl: task.image_url,
@@ -80,19 +92,25 @@ export class ChatService {
   }
 
   async handleSegmentationWebhook(body: SegmentationCallbackDto) {
-    const existingTask = await this.tasksService.getTask(body.job_id);
-    const clientId = this.realtimeService.getClientIdForTask(body.job_id);
-    const sessionId =
-      existingTask.session_id ||
-      this.realtimeService.getSessionIdForTask(body.job_id);
+    const existingTask = await this.tasksService.getActiveSegmentationTask(
+      body.session_id,
+    );
+    const clientId = existingTask
+      ? this.realtimeService.getClientIdForTask(existingTask.job_id)
+      : undefined;
+    const sessionId = body.session_id;
 
     if (body.status === TaskStatus.Error) {
+      if (!existingTask) {
+        return { status: "duplicate-ignored" };
+      }
+
       if (existingTask.status === TaskStatus.SuccessVlm) {
         return { status: "duplicate-ignored" };
       }
 
       await this.tasksService.setError(
-        body.job_id,
+        existingTask.job_id,
         body.error_code || "SEGMENTATION_FAILED",
         body.error_message || "Segmentation failed",
       );
@@ -100,12 +118,16 @@ export class ChatService {
         clientId,
         "Segmentation Error",
         {
-          jobId: body.job_id,
+          jobId: existingTask.job_id,
           error: body.error_message || "Segmentation failed",
         },
         sessionId,
       );
       return { status: "ok" };
+    }
+
+    if (!existingTask) {
+      return { status: "duplicate-ignored" };
     }
 
     if (
@@ -116,8 +138,9 @@ export class ChatService {
     }
 
     const task = await this.tasksService.setSegmentationSuccess(
-      body.job_id,
+      existingTask.job_id,
       body.mask_all_overlay || body.mask_url || null,
+      body.metrics || null,
     );
     this.realtimeService.registerTaskSession(task.job_id, task.session_id);
 
@@ -125,17 +148,43 @@ export class ChatService {
       clientId,
       "Segmentation complete",
       {
-        jobId: body.job_id,
+        jobId: task.job_id,
         maskAllOverlay: task.mask_all_overlay,
+        metrics: task.metrics || null,
       },
       task.session_id,
     );
 
     await this.orchestrationService.enqueueVlm(
       task,
-      "",
+      task.question ||
+        "Hãy phân tích tình trạng ngập lụt của bức ảnh này và tóm tắt nguy cơ do lụt gây ra.",
       false,
       clientId,
+    );
+
+    return { status: "ok" };
+  }
+
+  async handleProgressWebhook(body: any) {
+    const { session_id, progress, est_seconds_remaining } = body;
+    const activeTask =
+      await this.tasksService.getActiveSegmentationTask(session_id);
+    const clientId = activeTask
+      ? this.realtimeService.getClientIdForTask(activeTask.job_id)
+      : undefined;
+    const sessionId = session_id;
+
+    // Gửi cập nhật tiến độ theo thời gian thực cho frontend
+    this.realtimeService.sendStatus(
+      clientId,
+      "Processing segmentation",
+      {
+        jobId: activeTask?.job_id,
+        progress: progress || 0,
+        estSecondsRemaining: est_seconds_remaining || 0,
+      },
+      sessionId,
     );
 
     return { status: "ok" };
@@ -145,9 +194,15 @@ export class ChatService {
     const existingTask = await this.tasksService.getTask(body.job_id);
     const clientId = this.realtimeService.getClientIdForTask(body.job_id);
     const sessionId =
-      body.session_id ||
       existingTask.session_id ||
       this.realtimeService.getSessionIdForTask(body.job_id);
+
+    if (body.session_id && body.session_id !== existingTask.session_id) {
+      this.logger.warn(
+        `Rejected VLM callback session mismatch for ${body.job_id}: expected ${existingTask.session_id}, received ${body.session_id}`,
+      );
+      throw new BadRequestException("session_id does not match task owner");
+    }
 
     if (body.status === TaskStatus.Error) {
       if (existingTask.status === TaskStatus.SuccessVlm) {
@@ -198,18 +253,21 @@ export class ChatService {
       return { status: "replayed" };
     }
 
-    const task = await this.tasksService.setVlmSuccess(
-      body.job_id,
-      reply,
-      body.session_id,
+    const task = await this.tasksService.setVlmSuccess(body.job_id, reply);
+
+    this.logger.log(
+      `Recording assistant response for session ${sessionId}, task ${task.job_id}`,
     );
 
+    // Không đính kèm mask vào tin nhắn chat để tránh loãng nội dung, người dùng có thể xem ở panel phải
+    const assistantImageUrls = [];
+
     await this.conversationService.recordAssistantResponse(
-      body.session_id,
+      sessionId,
       task.job_id,
       reply,
       body.context,
-      body.history,
+      assistantImageUrls,
     );
 
     this.realtimeService.sendReply(
@@ -217,17 +275,10 @@ export class ChatService {
       {
         reply,
         jobId: task.job_id,
-        imageUrls: task.mask_all_overlay ? [task.mask_all_overlay] : [],
+        imageUrls: assistantImageUrls,
+        createdAt: new Date().toISOString(),
       },
-      task.session_id,
-    );
-    this.realtimeService.sendStatus(
-      clientId,
-      "Task Completed",
-      {
-        jobId: task.job_id,
-      },
-      task.session_id,
+      sessionId,
     );
 
     return { status: "ok" };
@@ -239,16 +290,34 @@ export class ChatService {
 
     return {
       jobId: task.job_id,
+      reasoningTaskId: task.job_id,
       sessionId: task.session_id,
       status: task.status,
       imageUrl: task.image_url,
+      imageStatus: task.image_status,
       maskAllOverlay: task.mask_all_overlay,
       reply: task.vlm_analysis,
       errorCode: task.error_code,
       errorMessage: task.error_message,
       updatedAt: task.updated_at,
-      session,
+      metrics: task.metrics || null,
+      session: session ? this.serializeSession(session) : null,
     };
+  }
+
+  async getTasksBySession(sessionId: string) {
+    const tasks = await this.tasksService.getTasksBySession(sessionId);
+    return tasks.map((task) => ({
+      jobId: task.job_id,
+      reasoningTaskId: task.job_id,
+      sessionId: task.session_id,
+      imageUrl: task.image_url,
+      imageStatus: task.image_status,
+      maskAllOverlay: task.mask_all_overlay,
+      metrics: task.metrics || null,
+      status: task.status,
+      createdAt: task.created_at,
+    }));
   }
 
   async getSessionById(sessionId: string) {
@@ -256,19 +325,18 @@ export class ChatService {
     if (!session) {
       throw new NotFoundException(`Session ${sessionId} not found`);
     }
-    return session;
+    return this.serializeSession(session);
   }
 
   async getSessions(limit = 50) {
     const sessions = await this.conversationService.listSessions(limit);
     return sessions.map((session) => ({
       sessionId: session.session_id,
-      jobId: session.job_id,
       lastQuestion: session.last_question || null,
       lastReply: session.last_reply || null,
       updatedAt: session.updated_at || null,
       createdAt: session.created_at || null,
-      historyCount: Array.isArray(session.history) ? session.history.length : 0,
+      historyCount: session.history_count ?? 0,
     }));
   }
 
@@ -287,11 +355,21 @@ export class ChatService {
     }
 
     if (createChatDto.jobId && createChatDto.sessionId) {
-      const task = await this.tasksService.getTask(createChatDto.jobId);
+      const currentTask = await this.tasksService.getTask(createChatDto.jobId);
+      if (currentTask.session_id !== createChatDto.sessionId) {
+        throw new BadRequestException(
+          "jobId does not belong to the provided sessionId",
+        );
+      }
+
+      const nextTask = await this.tasksService.createReasoningTask(
+        createChatDto.sessionId,
+        trimmedMessage,
+      );
 
       await this.conversationService.recordUserMessage(
         createChatDto.sessionId,
-        createChatDto.jobId,
+        nextTask.job_id,
         trimmedMessage,
         createChatDto.reset,
       );
@@ -300,13 +378,13 @@ export class ChatService {
         createChatDto.sessionId,
         clientId,
       );
-      this.realtimeService.registerTaskClient(task.job_id, clientId);
+      this.realtimeService.registerTaskClient(nextTask.job_id, clientId);
       this.realtimeService.registerTaskSession(
-        task.job_id,
+        nextTask.job_id,
         createChatDto.sessionId,
       );
       await this.orchestrationService.enqueueVlm(
-        task,
+        nextTask,
         trimmedMessage,
         createChatDto.reset,
         clientId,
@@ -314,8 +392,9 @@ export class ChatService {
 
       return {
         queued: true,
-        jobId: task.job_id,
-        reply: "Follow-up question accepted. Processing with VLM.",
+        jobId: nextTask.job_id,
+        reasoningTaskId: nextTask.job_id,
+        reply: "⏳ Đang truy vấn mô hình chuyên gia...",
         imageUrls: [],
       };
     }
@@ -334,6 +413,42 @@ export class ChatService {
       reply:
         "Backend gateway đã hỗ trợ follow-up theo session. Hãy gửi kèm jobId và sessionId hoặc upload ảnh mới để bắt đầu pipeline.",
       imageUrls: [],
+    };
+  }
+
+  private assertValidUpload(file?: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException("file is required");
+    }
+
+    if (!file.buffer || file.buffer.length === 0) {
+      throw new BadRequestException("file must not be empty");
+    }
+
+    if (!ChatService.ALLOWED_UPLOAD_MIME_TYPES.has(file.mimetype)) {
+      throw new BadRequestException("file must be a png, jpeg, or webp image");
+    }
+  }
+
+  private serializeSession(session: Record<string, any>) {
+    return {
+      ...session,
+      sessionId: session.session_id,
+      lastQuestion: session.last_question || null,
+      lastReply: session.last_reply || null,
+      createdAt: session.created_at || null,
+      updatedAt: session.updated_at || null,
+      historyCount: session.history_count ?? 0,
+      imageTask: session.image_task ?? null,
+      reasoningTasks: session.reasoning_tasks ?? [],
+      history: (session.history ?? []).map((entry: Record<string, any>) => ({
+        ...entry,
+        historyId: entry.history_id,
+        sessionId: entry.session_id,
+        reasoningTaskId: entry.reasoning_task_id ?? null,
+        imageUrls: entry.image_urls ?? [],
+        createdAt: entry.created_at ?? null,
+      })),
     };
   }
 }

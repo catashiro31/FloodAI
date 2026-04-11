@@ -1,7 +1,0 @@
-version: "2"
-authtoken: ${NGROK_AUTH_TOKEN}
-tunnels:
-  reasonning-worker-api:
-    proto: http
-    addr: 8000
-    domain: peristaltic-unabsorbed-shirl.ngrok-free.dev

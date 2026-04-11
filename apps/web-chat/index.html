@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FloodWiz | Neural Segmentation Pipeline</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Outfit', 'sans-serif'] },
+                    colors: {
+                        brand: { primary: 'var(--accent-primary)', secondary: 'var(--accent-secondary)' },
+                        ui: { bg: 'var(--bg-primary)', card: 'var(--card-bg)', text: 'var(--text-primary)', muted: 'var(--text-muted)' }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-ui-bg text-ui-text min-h-screen font-sans selection:bg-brand-primary/30">
+
+    <!-- Navbar -->
+    <nav class="fixed top-0 z-50 flex w-full items-center justify-between glass-nav px-10 py-3">
+        <div class="flex items-center gap-3 w-1/4">
+            <div class="h-9 w-9 rounded-xl bg-gradient-to-br from-brand-primary to-brand-secondary flex items-center justify-center shadow-lg shadow-brand-primary/20">
+                <i data-lucide="waves" class="h-5 w-5 text-white"></i>
+            </div>
+            <div class="flex flex-col">
+                <span class="text-sm font-black tracking-tighter text-brand-primary leading-none uppercase">FloodWiz</span>
+                <span class="text-[8px] font-bold text-ui-muted tracking-[0.2em] uppercase leading-tight">Neural Pipeline</span>
+            </div>
+        </div>
+        <div class="flex items-center gap-12">
+            <button class="nav-link text-xs font-black uppercase tracking-widest text-ui-muted transition-all hover:text-brand-primary relative group" onclick="switchView('analysis')">
+                Assessment<span class="absolute -bottom-2 left-1/2 -translate-x-1/2 h-1 w-1 rounded-full bg-brand-primary opacity-0 transition-all group-hover:opacity-100"></span>
+            </button>
+            <button class="nav-link text-xs font-black uppercase tracking-widest text-ui-muted transition-all hover:text-brand-primary relative group" onclick="switchView('gallery')">
+                Mask Gallery<span class="absolute -bottom-2 left-1/2 -translate-x-1/2 h-1 w-1 rounded-full bg-brand-primary opacity-0 transition-all group-hover:opacity-100"></span>
+            </button>
+        </div>
+        <div class="flex items-center justify-end gap-6 w-1/4">
+            <div class="hidden lg:flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/5 px-3 py-1.5">
+                <div class="h-1 w-1 animate-pulse rounded-full bg-emerald-500"></div>
+                <span class="text-[9px] font-black uppercase tracking-widest text-emerald-500">Node Active</span>
+            </div>
+            <button id="theme-toggle" class="flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 text-ui-muted transition-all hover:bg-brand-primary/10 hover:text-brand-primary">
+                <i data-lucide="settings" class="h-5 w-5"></i>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Sidebar -->
+    <aside class="fixed left-0 top-0 hidden h-screen w-72 flex-col gap-6 glass-sidebar p-6 pt-24 md:flex">
+        <div class="flex flex-col gap-3 px-2 flex-1 overflow-hidden">
+            <h2 class="text-xs font-black uppercase tracking-[0.3em] text-ui-muted/50 mb-1">Recent Sessions</h2>
+            <div id="session-list" class="flex flex-col gap-2 overflow-y-auto pr-2 custom-scrollbar">
+                <div class="px-4 py-3 text-xs text-ui-muted/30 animate-pulse bg-white/5 rounded-xl">Loading...</div>
+            </div>
+        </div>
+        <div class="mt-auto space-y-3 px-2">
+            <button id="new-session-btn" class="w-full flex items-center justify-center gap-2 rounded-xl border border-brand-primary/30 bg-brand-primary/5 px-4 py-3 text-xs font-black uppercase tracking-widest text-brand-primary transition-all hover:bg-brand-primary/10 active:scale-[0.98]">
+                <i data-lucide="plus-circle" class="h-4 w-4"></i>
+                New Assessment
+            </button>
+        </div>
+    </aside>
+
+    <!-- ==================== ASSESSMENT VIEW ==================== -->
+    <div id="analysis-view" class="flex min-h-screen flex-col pt-16 md:pl-72 bg-ui-bg">
+        <main class="flex h-[calc(100vh-64px)] w-full overflow-hidden">
+            <!-- Left Column: Chat History & Input -->
+            <div class="flex flex-1 flex-col border-r border-white/5 relative bg-ui-bg">
+                <div class="flex items-center justify-between border-b border-white/5 px-6 py-4 bg-ui-bg/50 backdrop-blur-sm z-10">
+                    <div class="flex items-center gap-3">
+                        <div class="h-8 w-8 rounded-lg bg-brand-primary/10 flex items-center justify-center">
+                            <i data-lucide="message-square" class="h-4 w-4 text-brand-primary"></i>
+                        </div>
+                        <h1 class="text-sm font-black uppercase tracking-widest text-ui-text">AI Assessment Chat</h1>
+                    </div>
+                    <span class="rounded-full bg-brand-primary/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-brand-primary">Active Analysis</span>
+                </div>
+
+                <!-- Chat History -->
+                <div id="analysis-chat-history" class="relative flex-1 space-y-8 overflow-y-auto px-6 py-8 custom-scrollbar scroll-smooth">
+                </div>
+
+                <!-- Input Area -->
+                <div class="border-t border-white/5 p-6 bg-ui-bg/50 backdrop-blur-md">
+                    <div class="relative flex flex-col gap-4">
+                        <button id="session-upload-gate" type="button" class="session-upload-gate hidden w-full overflow-hidden rounded-[28px] border border-dashed border-brand-primary/30 bg-gradient-to-br from-brand-primary/10 via-white/5 to-transparent p-5 text-left shadow-2xl shadow-brand-primary/10 transition-all hover:border-brand-primary/60 hover:shadow-brand-primary/20"></button>
+                        <div id="analysis-previews" class="hidden"></div>
+                        <div id="analysis-composer" class="group relative flex items-center gap-3 rounded-[28px] bg-white/5 p-2 transition-all focus-within:bg-white/10 border border-white/5 focus-within:border-brand-primary/30 shadow-2xl">
+                            <input id="analysis-file-input" class="hidden" accept="image/*" type="file" />
+                            <div class="min-w-0 flex-1 px-2">
+                                <input id="analysis-chat-input" class="w-full bg-transparent py-2 text-sm font-medium outline-none placeholder:text-ui-muted/40" placeholder="Chọn ảnh ở ô lớn bên trên để bắt đầu..." type="text" />
+                                <p id="analysis-input-hint" class="pt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-ui-muted/35">Session mới cần một ảnh trước khi chat.</p>
+                            </div>
+                            <button id="analysis-send-btn" class="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-primary text-white transition-all hover:scale-105 active:scale-95">
+                                <i data-lucide="send" class="h-5 w-5"></i>
+                            </button>
+                        </div>
+                        <p class="text-[9px] font-bold text-ui-muted/30 uppercase tracking-[0.2em] text-center">Neural Pipeline v2.4 • Precise Segmentation Enabled</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Image Preview & Metrics -->
+            <div id="analysis-side-panel" class="hidden w-96 flex-col border-l border-white/5 lg:flex bg-ui-bg/30">
+                <!-- Session Image Preview (Top) -->
+                <div class="flex h-64 flex-col border-b border-white/5 p-6">
+                    <div class="mb-4 flex items-center justify-between">
+                        <h3 class="text-[10px] font-black uppercase tracking-[0.2em] text-ui-muted">Current Session Image</h3>
+                        <i data-lucide="image" class="h-3 w-3 text-brand-primary"></i>
+                    </div>
+                    <div id="session-image-container" class="flex flex-1 items-center justify-center overflow-hidden rounded-2xl border border-white/5 bg-black/20 group cursor-pointer relative">
+                        <div id="session-image-placeholder" class="flex flex-col items-center gap-2 text-ui-muted/20 transition-all group-hover:text-brand-primary/40">
+                            <i data-lucide="image" class="h-10 w-10"></i>
+                            <span class="text-[9px] font-bold uppercase tracking-widest">No Image Loaded</span>
+                        </div>
+                        <img id="current-session-image" class="hidden h-full w-full object-cover transition-transform duration-500 group-hover:scale-110" src="" alt="Session Image" />
+                        <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 transition-opacity group-hover:opacity-100 flex items-end p-4">
+                            <span class="text-[9px] font-black text-white uppercase tracking-widest">View Full Resolution</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Metrics Panel (Bottom) -->
+                <div class="flex-1 overflow-hidden p-6">
+                    <div class="mb-6 flex items-center justify-between">
+                        <h3 class="text-[10px] font-black uppercase tracking-[0.2em] text-ui-muted">Assessment Metrics</h3>
+                        <div id="metric-status-badge" class="hidden h-2 w-2 rounded-full bg-emerald-500"></div>
+                    </div>
+                    
+                    <div id="metrics-panel" class="hidden space-y-4 animate-slide-up">
+                        <div class="metrics-stack flex flex-col gap-4">
+                            <div class="glass-card rounded-2xl p-4 border-l-4 border-l-brand-primary">
+                                <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted/60 mb-2">Analysis Result</p>
+                                <div id="metric-status" class="font-black">—</div>
+                            </div>
+                            
+                            <div class="glass-card rounded-2xl p-4">
+                                <div class="flex items-center justify-between mb-3">
+                                    <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted/60">Road Flood Intensity</p>
+                                    <span id="metric-road" class="text-xs font-black text-brand-primary">—</span>
+                                </div>
+                                <div class="h-2 w-full overflow-hidden rounded-full bg-white/5 p-[1px]">
+                                    <div id="metric-road-bar" class="h-full bg-gradient-to-r from-brand-primary/40 to-brand-primary rounded-full transition-all duration-1000" style="width: 0%"></div>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="glass-card rounded-2xl p-4">
+                                    <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted/60 mb-1">Buildings</p>
+                                    <div class="flex items-baseline gap-1">
+                                        <span id="metric-bld-flood" class="text-xl font-black text-red-400">—</span>
+                                        <span id="metric-bld-total" class="text-[10px] font-bold text-ui-muted/40 uppercase">/ —</span>
+                                    </div>
+                                </div>
+                                <div class="glass-card rounded-2xl p-4">
+                                    <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted/60 mb-1">Vehicles</p>
+                                    <span id="metric-vehicle" class="text-xl font-black text-orange-400">—</span>
+                                </div>
+                            </div>
+
+                            <div class="glass-card rounded-2xl p-4 bg-gradient-to-br from-brand-primary/5 to-transparent">
+                                <p class="text-[9px] font-black uppercase tracking-widest text-ui-muted/60 mb-2">Estimated Flood Coverage</p>
+                                <div class="flex items-center justify-between">
+                                    <div id="metric-coverage" class="text-2xl font-black text-ui-text">—</div>
+                                    <div class="h-10 w-10 rounded-xl bg-brand-primary/10 flex items-center justify-center">
+                                        <i data-lucide="droplets" class="h-5 w-5 text-brand-primary"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Technical Legend -->
+                        <div class="mt-8 border-t border-white/5 pt-6">
+                            <h4 class="text-[10px] font-black uppercase tracking-widest text-ui-muted/40 mb-3">Detection Confidence</h4>
+                            <div class="flex flex-wrap gap-2">
+                                <span class="px-2 py-1 rounded-md bg-white/5 text-[8px] font-bold text-ui-muted uppercase tracking-tighter">Road: 94%</span>
+                                <span class="px-2 py-1 rounded-md bg-white/5 text-[8px] font-bold text-ui-muted uppercase tracking-tighter">Bld: 89%</span>
+                                <span class="px-2 py-1 rounded-md bg-white/5 text-[8px] font-bold text-ui-muted uppercase tracking-tighter">Veh: 82%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Empty State for Metrics -->
+                    <div id="metrics-empty-state" class="flex flex-col items-center justify-center h-full py-20 text-center">
+                        <div class="h-16 w-16 rounded-full bg-white/5 flex items-center justify-center mb-4 text-ui-muted/20">
+                            <i data-lucide="bar-chart-2" class="h-8 w-8"></i>
+                        </div>
+                        <p class="text-[10px] font-bold uppercase tracking-widest text-ui-muted/30">Analysis pending</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ==================== GALLERY VIEW ==================== -->
+    <div id="gallery-view" class="hidden min-h-screen flex-col pt-20 md:pl-72">
+        <main class="mx-auto max-w-6xl p-8 w-full">
+            <div class="mb-10 border-b border-white/5 pb-8">
+                <p class="mb-2 text-[10px] font-black uppercase tracking-[0.3em] text-brand-primary">Technical Output</p>
+                <h1 class="text-3xl font-extrabold tracking-tight text-ui-text">Segmentation Mask Gallery</h1>
+                <p class="mt-2 text-ui-muted max-w-2xl">Compare original UAV imagery with AI-generated segmentation masks using the interactive slider.</p>
+            </div>
+            <div id="gallery-content" class="space-y-10">
+                <!-- Gallery items injected here -->
+            </div>
+        </main>
+    </div>
+
+    <!-- Footer -->
+    <footer id="app-footer" class="flex flex-col items-center justify-between gap-6 border-t border-white/5 bg-white/2 p-8 md:flex-row md:pl-[300px]">
+        <div>
+            <span class="text-lg font-black tracking-tighter text-brand-primary">FloodWiz</span>
+            <span class="mx-4 text-ui-muted/20">|</span>
+            <span class="text-[10px] font-bold uppercase tracking-[0.2em] text-ui-muted">Neural Safety Analytics © 2025</span>
+        </div>
+    </footer>
+
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <script src="script.js"></script>
+    <script>
+        // Khởi tạo icons ngay khi trang load xong hoặc Lucide load xong
+        window.addEventListener('load', () => {
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            }
+        });
+    </script>
+</body>
+</html>
