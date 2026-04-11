@@ -1,4 +1,4 @@
-numpy<2.0.0
+numpy
 opencv-python-headless
 torch
 torchvision
@@ -13,6 +13,7 @@ python-multipart
 requests
 python-dotenv
 pydantic
-pyngrok
+huggingface_hub
+supabase
 nest-asyncio
 psycopg2-binary
