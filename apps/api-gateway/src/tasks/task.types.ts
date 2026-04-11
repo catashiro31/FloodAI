@@ -1,11 +1,10 @@
 import { TaskStatus } from "../common/task-status";
 
 export interface ImageTaskRecord {
-  job_id: string;
   session_id: string;
   image_url: string;
   status: TaskStatus;
-  mask_all_overlay?: string | null;
+  mask_url?: string | null;
   metrics?: Record<string, any> | null;
   error_code?: string | null;
   error_message?: string | null;
@@ -19,6 +18,8 @@ export interface ReasoningTaskRecord {
   session_id: string;
   status: TaskStatus;
   question?: string | null;
+  image_url?: string | null;
+  mask_url?: string | null;
   vlm_analysis?: string | null;
   error_code?: string | null;
   error_message?: string | null;

@@ -28,6 +28,8 @@ export class TasksRepository {
       session_id: task.session_id,
       status: task.status,
       question: task.question ?? null,
+      image_url: task.image_url ?? null,
+      mask_url: task.mask_url ?? null,
       vlm_analysis: task.vlm_analysis ?? null,
       error_code: task.error_code ?? null,
       error_message: task.error_message ?? null,
@@ -108,35 +110,39 @@ export class TasksRepository {
     return (data ?? []) as ReasoningTaskRecord[];
   }
 
-  async getLatestQueuedReasoningTask(
+  async getLatestReasoningTaskByStatuses(
     sessionId: string,
+    statuses: string[],
   ): Promise<ReasoningTaskRecord | null> {
+    if (statuses.length === 0) {
+      return null;
+    }
+
     const { data, error } = await this.client
       .from(this.databaseService.getReasoningTasksTableName())
       .select("*")
       .eq("session_id", sessionId)
-      .eq("status", "queued")
+      .in("status", statuses)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
     if (error) {
-      this.throwDatabaseError("getLatestQueuedReasoningTask", error);
+      this.throwDatabaseError("getLatestReasoningTaskByStatuses", error);
     }
 
     return (data as ReasoningTaskRecord | null) ?? null;
   }
 
-  async createImageTask(
+  async upsertImageTask(
     task: Partial<ImageTaskRecord>,
   ): Promise<ImageTaskRecord> {
     const timestamp = this.now();
     const payload = {
-      job_id: task.job_id,
       session_id: task.session_id,
       image_url: task.image_url,
       status: task.status,
-      mask_all_overlay: task.mask_all_overlay ?? null,
+      mask_url: task.mask_url ?? null,
       metrics: task.metrics ?? null,
       error_code: task.error_code ?? null,
       error_message: task.error_message ?? null,
@@ -147,26 +153,28 @@ export class TasksRepository {
 
     const { data, error } = await this.client
       .from(this.databaseService.getImageTasksTableName())
-      .insert(payload)
+      .upsert(payload, { onConflict: "session_id" })
       .select("*")
       .single();
 
     if (error) {
-      this.throwDatabaseError("createImageTask", error);
+      this.throwDatabaseError("upsertImageTask", error);
     }
 
     return data as ImageTaskRecord;
   }
 
-  async getImageTask(jobId: string): Promise<ImageTaskRecord | null> {
+  async getImageTaskBySession(
+    sessionId: string,
+  ): Promise<ImageTaskRecord | null> {
     const { data, error } = await this.client
       .from(this.databaseService.getImageTasksTableName())
       .select("*")
-      .eq("job_id", jobId)
+      .eq("session_id", sessionId)
       .maybeSingle();
 
     if (error) {
-      this.throwDatabaseError("getImageTask", error);
+      this.throwDatabaseError("getImageTaskBySession", error);
     }
 
     return (data as ImageTaskRecord | null) ?? null;
@@ -175,36 +183,11 @@ export class TasksRepository {
   async getLatestImageTaskBySession(
     sessionId: string,
   ): Promise<ImageTaskRecord | null> {
-    const { data, error } = await this.client
-      .from(this.databaseService.getImageTasksTableName())
-      .select("*")
-      .eq("session_id", sessionId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (error) {
-      this.throwDatabaseError("getLatestImageTaskBySession", error);
-    }
-
-    return (data as ImageTaskRecord | null) ?? null;
-  }
-
-  async listImageTasksBySession(sessionId: string): Promise<ImageTaskRecord[]> {
-    const { data, error } = await this.client
-      .from(this.databaseService.getImageTasksTableName())
-      .select("*")
-      .eq("session_id", sessionId);
-
-    if (error) {
-      this.throwDatabaseError("listImageTasksBySession", error);
-    }
-
-    return (data ?? []) as ImageTaskRecord[];
+    return this.getImageTaskBySession(sessionId);
   }
 
   async updateImageTask(
-    jobId: string,
+    sessionId: string,
     patch: Partial<ImageTaskRecord>,
   ): Promise<ImageTaskRecord> {
     const { data, error } = await this.client
@@ -213,7 +196,7 @@ export class TasksRepository {
         ...patch,
         updated_at: this.now(),
       })
-      .eq("job_id", jobId)
+      .eq("session_id", sessionId)
       .select("*")
       .maybeSingle();
 
@@ -222,7 +205,9 @@ export class TasksRepository {
     }
 
     if (!data) {
-      throw new NotFoundException(`Image task for job ${jobId} not found`);
+      throw new NotFoundException(
+        `Image task for session ${sessionId} not found`,
+      );
     }
 
     return data as ImageTaskRecord;

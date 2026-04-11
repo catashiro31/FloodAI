@@ -10,8 +10,7 @@ create table if not exists public.sessions (
 );
 
 create table if not exists public.task_image (
-  job_id uuid primary key references public.task_reasoning (job_id) on delete cascade,
-  session_id uuid not null references public.sessions (session_id) on delete cascade,
+  session_id uuid primary key references public.sessions (session_id) on delete cascade,
   image_url text not null,
   status text not null check (
     status in (
@@ -21,7 +20,7 @@ create table if not exists public.task_image (
       'error'
     )
   ),
-  mask_all_overlay text null,
+  mask_url text null,
   metrics jsonb null,
   error_code text null,
   error_message text null,
@@ -41,9 +40,11 @@ create table if not exists public.task_reasoning (
       'processing_vlm',
       'success_vlm',
       'error'
-    )
+  )
   ),
   question text null,
+  image_url text not null,
+  mask_url text null,
   vlm_analysis text null,
   error_code text null,
   error_message text null,

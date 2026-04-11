@@ -92,19 +92,25 @@ export class ChatService {
   }
 
   async handleSegmentationWebhook(body: SegmentationCallbackDto) {
-    const existingTask = await this.tasksService.getTask(body.job_id);
-    const clientId = this.realtimeService.getClientIdForTask(body.job_id);
-    const sessionId =
-      existingTask.session_id ||
-      this.realtimeService.getSessionIdForTask(body.job_id);
+    const existingTask = await this.tasksService.getActiveSegmentationTask(
+      body.session_id,
+    );
+    const clientId = existingTask
+      ? this.realtimeService.getClientIdForTask(existingTask.job_id)
+      : undefined;
+    const sessionId = body.session_id;
 
     if (body.status === TaskStatus.Error) {
+      if (!existingTask) {
+        return { status: "duplicate-ignored" };
+      }
+
       if (existingTask.status === TaskStatus.SuccessVlm) {
         return { status: "duplicate-ignored" };
       }
 
       await this.tasksService.setError(
-        body.job_id,
+        existingTask.job_id,
         body.error_code || "SEGMENTATION_FAILED",
         body.error_message || "Segmentation failed",
       );
@@ -112,12 +118,16 @@ export class ChatService {
         clientId,
         "Segmentation Error",
         {
-          jobId: body.job_id,
+          jobId: existingTask.job_id,
           error: body.error_message || "Segmentation failed",
         },
         sessionId,
       );
       return { status: "ok" };
+    }
+
+    if (!existingTask) {
+      return { status: "duplicate-ignored" };
     }
 
     if (
@@ -128,7 +138,7 @@ export class ChatService {
     }
 
     const task = await this.tasksService.setSegmentationSuccess(
-      body.job_id,
+      existingTask.job_id,
       body.mask_all_overlay || body.mask_url || null,
       body.metrics || null,
     );
@@ -138,7 +148,7 @@ export class ChatService {
       clientId,
       "Segmentation complete",
       {
-        jobId: body.job_id,
+        jobId: task.job_id,
         maskAllOverlay: task.mask_all_overlay,
         metrics: task.metrics || null,
       },
@@ -157,16 +167,20 @@ export class ChatService {
   }
 
   async handleProgressWebhook(body: any) {
-    const { job_id, progress, est_seconds_remaining } = body;
-    const clientId = this.realtimeService.getClientIdForTask(job_id);
-    const sessionId = this.realtimeService.getSessionIdForTask(job_id);
+    const { session_id, progress, est_seconds_remaining } = body;
+    const activeTask =
+      await this.tasksService.getActiveSegmentationTask(session_id);
+    const clientId = activeTask
+      ? this.realtimeService.getClientIdForTask(activeTask.job_id)
+      : undefined;
+    const sessionId = session_id;
 
     // Gửi cập nhật tiến độ theo thời gian thực cho frontend
     this.realtimeService.sendStatus(
       clientId,
       "Processing segmentation",
       {
-        jobId: job_id,
+        jobId: activeTask?.job_id,
         progress: progress || 0,
         estSecondsRemaining: est_seconds_remaining || 0,
       },
@@ -351,7 +365,6 @@ export class ChatService {
       const nextTask = await this.tasksService.createReasoningTask(
         createChatDto.sessionId,
         trimmedMessage,
-        currentTask.job_id,
       );
 
       await this.conversationService.recordUserMessage(

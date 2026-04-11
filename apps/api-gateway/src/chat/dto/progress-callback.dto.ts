@@ -3,7 +3,7 @@ import { IsNumber, IsOptional, IsUUID, Min } from "class-validator";
 
 export class ProgressCallbackDto {
   @IsUUID()
-  job_id: string;
+  session_id: string;
 
   @IsOptional()
   @Type(() => Number)

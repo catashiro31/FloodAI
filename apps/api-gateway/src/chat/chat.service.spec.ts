@@ -13,6 +13,7 @@ describe("ChatService", () => {
   const tasksService = {
     createTaskFromUpload: jest.fn(),
     createReasoningTask: jest.fn(),
+    getActiveSegmentationTask: jest.fn(),
     setError: jest.fn(),
     setSegmentationSuccess: jest.fn(),
     setVlmSuccess: jest.fn(),
@@ -75,20 +76,8 @@ describe("ChatService", () => {
       "11111111-1111-1111-1111-111111111111",
     );
 
-    expect(tasksService.createTaskFromUpload).toHaveBeenCalled();
     expect(conversationService.ensureSession).toHaveBeenCalledWith(
       "11111111-1111-1111-1111-111111111111",
-    );
-    expect(conversationService.recordUserMessage).toHaveBeenCalledWith(
-      "11111111-1111-1111-1111-111111111111",
-      "job-1",
-      "Muc nuoc o dau cao nhat?",
-      false,
-      ["https://example.com/image.png"],
-    );
-    expect(realtimeService.registerSessionClient).toHaveBeenCalledWith(
-      "11111111-1111-1111-1111-111111111111",
-      "client-1",
     );
     expect(orchestrationService.triggerSegmentation).toHaveBeenCalled();
     expect(result).toEqual({
@@ -119,14 +108,14 @@ describe("ChatService", () => {
 
   it("marks the task as error when segmentation callback fails", async () => {
     realtimeService.getClientIdForTask.mockReturnValue("client-1");
-    tasksService.getTask.mockResolvedValue({
+    tasksService.getActiveSegmentationTask.mockResolvedValue({
       job_id: "job-1",
       session_id: "11111111-1111-1111-1111-111111111111",
       status: TaskStatus.ProcessingSegmentation,
     });
 
     const response = await service.handleSegmentationWebhook({
-      job_id: "job-1",
+      session_id: "11111111-1111-1111-1111-111111111111",
       status: TaskStatus.Error,
       error_code: "SEGMENTATION_FAILED",
       error_message: "mask generation failed",
@@ -143,7 +132,7 @@ describe("ChatService", () => {
 
   it("queues VLM after segmentation success", async () => {
     realtimeService.getClientIdForTask.mockReturnValue("client-1");
-    tasksService.getTask.mockResolvedValue({
+    tasksService.getActiveSegmentationTask.mockResolvedValue({
       job_id: "job-1",
       session_id: "11111111-1111-1111-1111-111111111111",
       status: TaskStatus.ProcessingSegmentation,
@@ -153,18 +142,20 @@ describe("ChatService", () => {
       session_id: "11111111-1111-1111-1111-111111111111",
       question: "Summarize the flood risk",
       mask_all_overlay: "https://example.com/mask.png",
+      metrics: { floodCoveragePercent: 12.5 },
     });
 
     await service.handleSegmentationWebhook({
-      job_id: "job-1",
+      session_id: "11111111-1111-1111-1111-111111111111",
       status: TaskStatus.SuccessSegmentation,
       mask_all_overlay: "https://example.com/mask.png",
+      metrics: { floodCoveragePercent: 12.5 },
     });
 
     expect(tasksService.setSegmentationSuccess).toHaveBeenCalledWith(
       "job-1",
       "https://example.com/mask.png",
-      null,
+      { floodCoveragePercent: 12.5 },
     );
     expect(orchestrationService.enqueueVlm).toHaveBeenCalledWith(
       expect.objectContaining({ job_id: "job-1" }),
@@ -174,16 +165,11 @@ describe("ChatService", () => {
     );
   });
 
-  it("ignores duplicate segmentation callbacks after downstream processing advanced", async () => {
-    realtimeService.getClientIdForTask.mockReturnValue("client-1");
-    tasksService.getTask.mockResolvedValue({
-      job_id: "job-1",
-      session_id: "11111111-1111-1111-1111-111111111111",
-      status: TaskStatus.ProcessingVlm,
-    });
+  it("ignores duplicate segmentation callbacks after the session image is already segmented", async () => {
+    tasksService.getActiveSegmentationTask.mockResolvedValue(null);
 
     const result = await service.handleSegmentationWebhook({
-      job_id: "job-1",
+      session_id: "11111111-1111-1111-1111-111111111111",
       status: TaskStatus.SuccessSegmentation,
       mask_all_overlay: "https://example.com/mask.png",
     });
@@ -191,6 +177,33 @@ describe("ChatService", () => {
     expect(tasksService.setSegmentationSuccess).not.toHaveBeenCalled();
     expect(orchestrationService.enqueueVlm).not.toHaveBeenCalled();
     expect(result).toEqual({ status: "duplicate-ignored" });
+  });
+
+  it("routes progress updates by session_id", async () => {
+    realtimeService.getClientIdForTask.mockReturnValue("client-1");
+    tasksService.getActiveSegmentationTask.mockResolvedValue({
+      job_id: "job-1",
+      session_id: "11111111-1111-1111-1111-111111111111",
+      status: TaskStatus.ProcessingSegmentation,
+    });
+
+    const result = await service.handleProgressWebhook({
+      session_id: "11111111-1111-1111-1111-111111111111",
+      progress: 42,
+      est_seconds_remaining: 8,
+    });
+
+    expect(realtimeService.sendStatus).toHaveBeenCalledWith(
+      "client-1",
+      "Processing segmentation",
+      expect.objectContaining({
+        jobId: "job-1",
+        progress: 42,
+        estSecondsRemaining: 8,
+      }),
+      "11111111-1111-1111-1111-111111111111",
+    );
+    expect(result).toEqual({ status: "ok" });
   });
 
   it("persists session and emits realtime payload when vlm succeeds", async () => {
@@ -327,7 +340,6 @@ describe("ChatService", () => {
     expect(tasksService.createReasoningTask).toHaveBeenCalledWith(
       "22222222-2222-2222-2222-222222222222",
       "Can you focus on the eastern bridge?",
-      "job-2",
     );
     expect(result.jobId).toBe("job-3");
     expect(result.queued).toBe(true);

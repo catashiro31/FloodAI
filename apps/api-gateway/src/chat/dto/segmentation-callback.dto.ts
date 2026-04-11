@@ -9,7 +9,7 @@ import { TaskStatus } from "../../common/task-status";
 
 export class SegmentationCallbackDto {
   @IsUUID()
-  job_id: string;
+  session_id: string;
 
   @IsEnum(TaskStatus)
   status: TaskStatus;

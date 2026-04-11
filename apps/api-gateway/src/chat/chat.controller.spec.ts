@@ -17,6 +17,8 @@ describe("ChatController", () => {
   const tasksService = {
     createTaskFromUpload: jest.fn(),
     createReasoningTask: jest.fn(),
+    getActiveSegmentationTask: jest.fn(),
+    getSessionImageTask: jest.fn(),
     getTask: jest.fn(),
     setError: jest.fn(),
     setSegmentationSuccess: jest.fn(),
@@ -51,6 +53,7 @@ describe("ChatController", () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    tasksService.getActiveSegmentationTask.mockResolvedValue(null);
 
     const moduleRef = await Test.createTestingModule({
       controllers: [ChatController],
@@ -185,7 +188,7 @@ describe("ChatController", () => {
     await request(app.getHttpServer())
       .post("/chat/webhook/progress")
       .send({
-        job_id: "a4940a91-ea44-448e-9680-6be9203c4f6d",
+        session_id: "874ae4ec-a53f-4c20-b6d1-06be17463851",
         progress: 10,
       })
       .expect(401);
@@ -199,7 +202,7 @@ describe("ChatController", () => {
     await request(app.getHttpServer())
       .post("/chat/webhook/progress?token=secret-123")
       .send({
-        job_id: "a4940a91-ea44-448e-9680-6be9203c4f6d",
+        session_id: "874ae4ec-a53f-4c20-b6d1-06be17463851",
         progress: 10,
       })
       .expect(201);

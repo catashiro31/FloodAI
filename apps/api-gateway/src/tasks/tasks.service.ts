@@ -21,6 +21,15 @@ export class TasksService {
   ) {}
 
   async createTaskFromUpload(input: CreateTaskInput) {
+    const existingImageTask = await this.repository.getLatestImageTaskBySession(
+      input.sessionId,
+    );
+    if (existingImageTask) {
+      throw new ConflictException(
+        `Session ${input.sessionId} already has an uploaded image`,
+      );
+    }
+
     const jobId = crypto.randomUUID();
     const fileHash = crypto
       .createHash("sha256")
@@ -48,18 +57,19 @@ export class TasksService {
       session_id: input.sessionId,
       status: TaskStatus.Queued,
       question: input.question?.trim() || null,
+      image_url: imageUrl,
+      mask_url: null,
       vlm_analysis: null,
       error_code: null,
       error_message: null,
       vlm_callback_at: null,
     });
 
-    await this.repository.createImageTask({
-      job_id: jobId,
+    await this.repository.upsertImageTask({
       session_id: input.sessionId,
       image_url: imageUrl,
       status: TaskStatus.Queued,
-      mask_all_overlay: null,
+      mask_url: null,
       metrics: null,
       error_code: null,
       error_message: null,
@@ -74,11 +84,15 @@ export class TasksService {
     return savedTask;
   }
 
-  async createReasoningTask(
-    sessionId: string,
-    question: string,
-    sourceJobId?: string,
-  ) {
+  async createReasoningTask(sessionId: string, question: string) {
+    const imageTask =
+      await this.repository.getLatestImageTaskBySession(sessionId);
+    if (!imageTask) {
+      throw new ConflictException(
+        `Session ${sessionId} does not have an uploaded image`,
+      );
+    }
+
     const jobId = crypto.randomUUID();
 
     await this.repository.createReasoningTask({
@@ -86,66 +100,67 @@ export class TasksService {
       session_id: sessionId,
       status: TaskStatus.Queued,
       question: question.trim(),
+      image_url: imageTask.image_url,
+      mask_url: imageTask.mask_url ?? null,
       vlm_analysis: null,
       error_code: null,
       error_message: null,
       vlm_callback_at: null,
     });
 
-    if (sourceJobId) {
-      const sourceImageTask = await this.repository.getImageTask(sourceJobId);
-      if (sourceImageTask) {
-        await this.repository.createImageTask({
-          job_id: jobId,
-          session_id: sessionId,
-          image_url: sourceImageTask.image_url,
-          status: sourceImageTask.status,
-          mask_all_overlay: sourceImageTask.mask_all_overlay ?? null,
-          metrics: sourceImageTask.metrics ?? null,
-          error_code: sourceImageTask.error_code ?? null,
-          error_message: sourceImageTask.error_message ?? null,
-          segmentation_callback_at:
-            sourceImageTask.segmentation_callback_at ?? null,
-        });
-      }
-    }
-
     return this.getTask(jobId);
   }
 
   async getTask(jobId: string) {
     const reasoningTask = await this.repository.getReasoningTask(jobId);
-    const imageTask = await this.repository.getImageTask(jobId);
+    const imageTask = await this.repository.getLatestImageTaskBySession(
+      reasoningTask.session_id,
+    );
     return this.hydrateTask(reasoningTask, imageTask);
   }
 
   async getTasksBySession(sessionId: string) {
-    const [reasoningTasks, imageTasks] = await Promise.all([
+    const [reasoningTasks, imageTask] = await Promise.all([
       this.repository.listReasoningTasksBySession(sessionId),
-      this.repository.listImageTasksBySession(sessionId),
+      this.repository.getLatestImageTaskBySession(sessionId),
     ]);
-    const imageTaskByJobId = new Map(
-      imageTasks.map((imageTask) => [imageTask.job_id, imageTask]),
-    );
 
     return reasoningTasks.map((reasoningTask) =>
-      this.hydrateTask(
-        reasoningTask,
-        imageTaskByJobId.get(reasoningTask.job_id),
-      ),
+      this.hydrateTask(reasoningTask, imageTask),
     );
+  }
+
+  async getSessionImageTask(sessionId: string) {
+    return this.repository.getLatestImageTaskBySession(sessionId);
+  }
+
+  async getActiveSegmentationTask(sessionId: string) {
+    const processingTask =
+      await this.repository.getLatestReasoningTaskByStatuses(sessionId, [
+        TaskStatus.ProcessingSegmentation,
+      ]);
+    if (processingTask) {
+      return processingTask;
+    }
+
+    return this.repository.getLatestReasoningTaskByStatuses(sessionId, [
+      TaskStatus.Queued,
+    ]);
   }
 
   async setSegmentationProcessing(jobId: string) {
     const task = await this.repository.getReasoningTask(jobId);
 
-    await this.repository.updateImageTask(task.job_id, {
+    await this.repository.updateImageTask(task.session_id, {
       status: TaskStatus.ProcessingSegmentation,
       error_code: null,
       error_message: null,
     });
 
-    return this.transition(jobId, TaskStatus.ProcessingSegmentation);
+    return this.transition(jobId, TaskStatus.ProcessingSegmentation, {
+      error_code: null,
+      error_message: null,
+    });
   }
 
   async setSegmentationSuccess(
@@ -155,16 +170,20 @@ export class TasksService {
   ) {
     const task = await this.repository.getReasoningTask(jobId);
 
-    await this.repository.updateImageTask(task.job_id, {
+    await this.repository.updateImageTask(task.session_id, {
       status: TaskStatus.SuccessSegmentation,
-      mask_all_overlay: maskAllOverlay || null,
+      mask_url: maskAllOverlay || null,
       metrics: metrics || null,
       error_code: null,
       error_message: null,
       segmentation_callback_at: new Date(),
     });
 
-    return this.transition(jobId, TaskStatus.SuccessSegmentation);
+    return this.transition(jobId, TaskStatus.SuccessSegmentation, {
+      mask_url: maskAllOverlay || null,
+      error_code: null,
+      error_message: null,
+    });
   }
 
   async setVlmProcessing(jobId: string, question?: string) {
@@ -195,7 +214,7 @@ export class TasksService {
       task.status === TaskStatus.Queued ||
       task.status === TaskStatus.ProcessingSegmentation
     ) {
-      await this.repository.updateImageTask(task.job_id, {
+      await this.repository.updateImageTask(task.session_id, {
         status: TaskStatus.Error,
         error_code: errorCode,
         error_message: errorMessage,
@@ -237,10 +256,13 @@ export class TasksService {
     reasoningTask: ReasoningTaskRecord,
     imageTask?: ImageTaskRecord | null,
   ): TaskRecord {
+    const maskUrl = reasoningTask.mask_url ?? imageTask?.mask_url ?? null;
+
     return {
       ...reasoningTask,
-      image_url: imageTask?.image_url ?? null,
-      mask_all_overlay: imageTask?.mask_all_overlay ?? null,
+      image_url: reasoningTask.image_url ?? imageTask?.image_url ?? null,
+      mask_url: maskUrl,
+      mask_all_overlay: maskUrl,
       metrics: imageTask?.metrics ?? null,
       image_status: imageTask?.status ?? null,
       segmentation_callback_at: imageTask?.segmentation_callback_at ?? null,

@@ -35,7 +35,7 @@ export class OrchestrationService {
       );
 
       await this.segmentationClient.trigger(
-        task.job_id,
+        task.session_id,
         this.buildCallbackUrl("/chat/webhook/segmentation"),
         this.buildCallbackUrl("/chat/webhook/progress"),
       );

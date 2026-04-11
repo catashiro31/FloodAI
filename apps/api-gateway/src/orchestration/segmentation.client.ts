@@ -12,7 +12,7 @@ export class SegmentationClient {
     private readonly configService: ConfigService,
   ) {}
 
-  async trigger(jobId: string, callbackUrl: string, progressUrl?: string) {
+  async trigger(sessionId: string, callbackUrl: string, progressUrl?: string) {
     const endpoint = this.configService.get<string>("SEGMENT_SERVICE_URL");
 
     if (!endpoint) {
@@ -20,7 +20,7 @@ export class SegmentationClient {
     }
 
     const payload = {
-      job_id: jobId,
+      session_id: sessionId,
       callback_url: callbackUrl,
       progress_url: progressUrl || undefined,
     };
@@ -31,7 +31,7 @@ export class SegmentationClient {
     for (const candidate of candidates) {
       try {
         this.logger.log(
-          `Triggering segmentation for ${jobId} via ${candidate}`,
+          `Triggering segmentation for session ${sessionId} via ${candidate}`,
         );
         const response = await firstValueFrom(
           this.httpService.post(candidate, payload),
