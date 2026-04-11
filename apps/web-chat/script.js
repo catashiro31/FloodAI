@@ -14,6 +14,67 @@ function resolveImageUrl(url) {
     return url;
 }
 
+function normalizeText(value, fallback = '') {
+    return typeof value === 'string' ? value : fallback;
+}
+
+function escapeHtml(value) {
+    return normalizeText(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function escapeAttribute(value) {
+    return escapeHtml(value).replace(/`/g, '&#96;');
+}
+
+function toMetricNumber(value, fallback = 0) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : fallback;
+}
+
+function isProcessingTaskStatus(status) {
+    return ['queued', 'processing_segmentation', 'processing_vlm'].includes(normalizeText(status).trim());
+}
+
+function hasTaskImage(task) {
+    return Boolean(task && (task.image_url || task.imageUrl));
+}
+
+function hasTaskMask(task) {
+    return Boolean(task && (task.mask_all_overlay || task.maskAllOverlay || task.mask_url || task.maskUrl));
+}
+
+function isInterimReplyText(reply) {
+    return normalizeText(reply).trim().startsWith('⏳');
+}
+
+function normalizeImageUrls(value) {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value
+        .map((item) => resolveImageUrl(normalizeText(item).trim()))
+        .filter(Boolean);
+}
+
+function findLastBotPlaceholderIndex() {
+    for (let i = analysisMessages.length - 1; i >= 0; i -= 1) {
+        const message = analysisMessages[i];
+        if (
+            message?.sender === 'bot' &&
+            (message.text === 'Đang suy nghĩ...' || normalizeText(message.text).includes('⏳') || normalizeText(message.text).includes('Pipeline'))
+        ) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 // Initialize Socket.io
 let socket;
 if (typeof io !== 'undefined') {
@@ -29,11 +90,16 @@ let sessionId = localStorage.getItem('session_id') || "";
 let currentJobId = localStorage.getItem('current_job_id') || "";
 let sessions = [];
 let sessionHasImage = false;
+let sessionReadyForChat = false;
 let currentMetrics = null;
 let isProcessing = false; // Global lock for any AI processing
 let sessionImageUrl = '';
 let selectedPreviewUrl = '';
 let isSessionHydrating = true;
+let currentTaskStatus = '';
+let allowNextReplyToReplaceJob = false;
+let sessionLoadToken = 0;
+let galleryLoadToken = 0;
 
 if (!sessionId) {
     sessionId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2);
@@ -62,6 +128,27 @@ const sessionListEl = document.getElementById('session-list');
 const metricsPanelEl = document.getElementById('metrics-panel');
 const galleryContentEl = document.getElementById('gallery-content');
 
+function setCurrentJobId(jobId) {
+    currentJobId = normalizeText(jobId).trim();
+    if (currentJobId) {
+        localStorage.setItem('current_job_id', currentJobId);
+    } else {
+        localStorage.removeItem('current_job_id');
+    }
+}
+
+function applySessionTaskState(task) {
+    sessionHasImage = hasTaskImage(task);
+    sessionReadyForChat = sessionHasImage && hasTaskMask(task) && !isProcessingTaskStatus(task?.status);
+    currentTaskStatus = normalizeText(task?.status).trim();
+
+    setCurrentJobId(task?.job_id || task?.jobId || '');
+    updateSessionImage(task?.image_url || task?.imageUrl || null);
+
+    currentMetrics = task?.metrics || null;
+    renderMetricsPanel(currentMetrics);
+}
+
 // ====================== SOCKET EVENTS ======================
 
 socket.on('connect', () => {
@@ -73,25 +160,34 @@ socket.on('connect', () => {
 
 socket.on('uploadStatus', (data) => {
     console.log('📡 uploadStatus:', data);
+    const eventJobId = normalizeText(data?.details?.jobId).trim();
+    if (!eventJobId || (!currentJobId && !isProcessing) || (currentJobId && eventJobId !== currentJobId)) {
+        return;
+    }
+
     const lastBotMsg = [...analysisMessages].reverse().find(m => m.sender === 'bot');
 
     if (data.status && data.status.includes('Segmentation complete')) {
-        // Segmentation done — show metrics, unlock chat
+        sessionHasImage = true;
+        sessionReadyForChat = false;
+        currentTaskStatus = 'processing_vlm';
+
         if (data.details?.metrics) {
             currentMetrics = data.details.metrics;
             renderMetricsPanel(currentMetrics);
         }
-        if (data.details?.imageUrl) {
-            updateSessionImage(data.details.imageUrl);
+        if (data.details?.maskAllOverlay || data.details?.imageUrl) {
+            updateSessionImage(data.details.imageUrl || sessionImageUrl);
         }
-        if (lastBotMsg) lastBotMsg.text = '✅ Phân đoạn hoàn tất! Mời bạn đặt câu hỏi về ảnh.';
-        unlockChat();
+        if (lastBotMsg) lastBotMsg.text = '✅ Phân đoạn hoàn tất, đang tổng hợp nhận định...';
+        lockChat();
         renderAnalysisMessages(true);
         return;
     }
 
     if (data.status && data.status.includes('Error')) {
-        isProcessing = false;
+        currentTaskStatus = 'error';
+        sessionReadyForChat = false;
         if (lastBotMsg) lastBotMsg.text = `❌ Lỗi: ${data.details?.error || data.status}`;
         unlockChat();
         renderAnalysisMessages(true);
@@ -123,30 +219,47 @@ socket.on('uploadStatus', (data) => {
 
 socket.on('receiveMessage', (data) => {
     console.log('💬 receiveMessage:', data);
-    if (data.jobId) {
-        currentJobId = data.jobId;
-        localStorage.setItem('current_job_id', currentJobId);
+    const incomingJobId = normalizeText(data?.jobId).trim();
+    if (incomingJobId) {
+        if (!currentJobId) {
+            if (!isProcessing) {
+                return;
+            }
+        } else if (incomingJobId !== currentJobId) {
+            if (!(allowNextReplyToReplaceJob && isProcessing)) {
+                return;
+            }
+        }
+        setCurrentJobId(incomingJobId);
+        allowNextReplyToReplaceJob = false;
     }
 
-    // Find the "Thinking..." or pipeline message to replace
-    const thinkingIdx = analysisMessages.findIndex(m =>
-        m.sender === 'bot' && (m.text === 'Đang suy nghĩ...' || m.text.includes('⏳') || m.text.includes('Pipeline'))
-    );
+    const interimReply = isInterimReplyText(data?.reply);
+    const thinkingIdx = findLastBotPlaceholderIndex();
 
     if (thinkingIdx !== -1) {
         analysisMessages[thinkingIdx].text = data.reply;
-        analysisMessages[thinkingIdx].imageUrls = [];
+        analysisMessages[thinkingIdx].imageUrls = normalizeImageUrls(data.imageUrls || data.image_urls || []);
     } else {
         analysisMessages.push({
             id: Date.now().toString(),
             sender: 'bot',
             text: data.reply,
             createdAt: data.createdAt ? new Date(data.createdAt).getTime() : Date.now(),
-            imageUrls: []
+            imageUrls: normalizeImageUrls(data.imageUrls || data.image_urls || [])
         });
     }
 
-    isProcessing = false;
+    if (interimReply) {
+        currentTaskStatus = 'processing_vlm';
+        lockChat();
+        renderAnalysisMessages(true);
+        fetchSessions();
+        return;
+    }
+
+    currentTaskStatus = 'success_vlm';
+    sessionReadyForChat = true;
     unlockChat();
     renderAnalysisMessages(true);
     fetchSessions();
@@ -213,28 +326,29 @@ function renderMetricsPanel(metrics) {
 
     const statusEl = document.getElementById('metric-status');
     if (statusEl) {
-        statusEl.innerHTML = metrics.is_flooded
+        statusEl.innerHTML = Boolean(metrics.is_flooded)
             ? '<span class="inline-flex items-center gap-1.5 rounded-full bg-red-500/20 px-3 py-1 text-[10px] font-black text-red-400 uppercase tracking-widest"><i data-lucide="alert-triangle" class="h-3 w-3"></i> Khu vực Ngập</span>'
             : '<span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1 text-[10px] font-black text-emerald-400 uppercase tracking-widest"><i data-lucide="shield-check" class="h-3 w-3"></i> An toàn</span>';
     }
 
     const roadEl = document.getElementById('metric-road');
     const roadBarEl = document.getElementById('metric-road-bar');
-    if (roadEl) roadEl.textContent = `${metrics.road_flood_ratio}%`;
+    const roadFloodRatio = Math.min(toMetricNumber(metrics.road_flood_ratio), 100);
+    if (roadEl) roadEl.textContent = `${roadFloodRatio}%`;
     if (roadBarEl) {
-        setTimeout(() => { roadBarEl.style.width = `${Math.min(metrics.road_flood_ratio, 100)}%`; }, 100);
+        setTimeout(() => { roadBarEl.style.width = `${roadFloodRatio}%`; }, 100);
     }
 
     const bldFloodEl = document.getElementById('metric-bld-flood');
     const bldTotalEl = document.getElementById('metric-bld-total');
-    if (bldFloodEl) bldFloodEl.textContent = metrics.building_flooded_count;
-    if (bldTotalEl) bldTotalEl.textContent = `/ ${metrics.building_total_count}`;
+    if (bldFloodEl) bldFloodEl.textContent = `${toMetricNumber(metrics.building_flooded_count)}`;
+    if (bldTotalEl) bldTotalEl.textContent = `/ ${toMetricNumber(metrics.building_total_count)}`;
 
     const vehicleEl = document.getElementById('metric-vehicle');
-    if (vehicleEl) vehicleEl.textContent = metrics.vehicle_on_flooded_road;
+    if (vehicleEl) vehicleEl.textContent = `${toMetricNumber(metrics.vehicle_on_flooded_road)}`;
 
     const coverageEl = document.getElementById('metric-coverage');
-    if (coverageEl) coverageEl.textContent = `${metrics.flood_coverage_percent}%`;
+    if (coverageEl) coverageEl.textContent = `${toMetricNumber(metrics.flood_coverage_percent)}%`;
 
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
@@ -264,7 +378,7 @@ function renderSessionUploadGate() {
         <div class="session-upload-gate__layout flex items-center gap-4 lg:gap-5">
             <div class="session-upload-gate__visual flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-[24px] lg:h-28 lg:w-28">
                 ${hasPendingImage
-                    ? `<img src="${gatePreviewUrl}" alt="Selected session image" class="session-upload-gate__thumb h-full w-full object-cover" />`
+                    ? `<img src="${escapeAttribute(gatePreviewUrl)}" alt="Selected session image" class="session-upload-gate__thumb h-full w-full object-cover" />`
                     : `<div class="flex flex-col items-center gap-2 text-brand-primary">
                             <i data-lucide="image-plus" class="h-8 w-8"></i>
                             <span class="text-[9px] font-black uppercase tracking-[0.25em]">1 ảnh</span>
@@ -288,7 +402,7 @@ function renderSessionUploadGate() {
                         : 'Bấm để chọn ảnh, kéo thả file vào đây, hoặc dán ảnh bằng Ctrl+V để mở chat cho session này.'}
                 </p>
                 <p class="mt-3 truncate text-[11px] font-bold text-ui-muted/75">
-                    ${selectedFile?.name || 'Mẹo: sử dụng ảnh chụp từ UAV/drone để kết quả segment ổn định hơn.'}
+                    ${escapeHtml(selectedFile?.name || 'Mẹo: sử dụng ảnh chụp từ UAV/drone để kết quả segment ổn định hơn.')}
                 </p>
             </div>
             <div class="session-upload-gate__cta inline-flex shrink-0 items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-ui-text">
@@ -303,16 +417,20 @@ function renderSessionUploadGate() {
 
 function syncComposerState() {
     const hasPendingImage = selectedFiles.length > 0;
-    const inputLockedByGate = !sessionHasImage && !hasPendingImage;
+    const inputLockedByGate = sessionReadyForChat ? false : (sessionHasImage || !hasPendingImage);
     const inputText = analysisChatInputEl?.value.trim() || '';
-    const canSend = !isProcessing && (sessionHasImage ? inputText.length > 0 : hasPendingImage);
+    const canSend = !isProcessing && (sessionReadyForChat ? inputText.length > 0 : (!sessionHasImage && hasPendingImage));
 
     if (analysisChatInputEl) {
         analysisChatInputEl.disabled = isProcessing || inputLockedByGate;
         analysisChatInputEl.placeholder = isProcessing
             ? "⏳ Đang xử lý, vui lòng chờ..."
-            : sessionHasImage
+            : sessionReadyForChat
                 ? "Nhập câu hỏi về ảnh đã tải lên..."
+                : sessionHasImage
+                    ? (isProcessingTaskStatus(currentTaskStatus)
+                        ? "Ảnh đang được AI xử lý, chưa thể hỏi tiếp..."
+                        : "Session này chưa sẵn sàng để hỏi tiếp...")
                 : hasPendingImage
                     ? "Thêm ghi chú cho lần segment này (tuỳ chọn)..."
                     : "Chọn ảnh ở ô lớn bên trên để bắt đầu...";
@@ -323,8 +441,12 @@ function syncComposerState() {
     if (analysisInputHintEl) {
         analysisInputHintEl.textContent = isProcessing
             ? 'FloodWiz đang xử lý ảnh, composer sẽ mở lại ngay khi xong.'
-            : sessionHasImage
+            : sessionReadyForChat
                 ? 'Ảnh của session đang được ghim bên cạnh để bạn hỏi tiếp.'
+                : sessionHasImage
+                    ? (isProcessingTaskStatus(currentTaskStatus)
+                        ? 'Pipeline của session này vẫn đang chạy. Hãy đợi phản hồi cuối cùng.'
+                        : 'Session hiện có ảnh nhưng chưa có kết quả hợp lệ để hỏi tiếp.')
                 : hasPendingImage
                     ? 'Ảnh đã chọn. Bạn có thể gửi ngay hoặc thêm một câu hỏi ngắn.'
                     : 'Session mới cần một ảnh trước khi chat.';
@@ -334,9 +456,9 @@ function syncComposerState() {
         analysisSendBtnEl.disabled = !canSend;
         analysisSendBtnEl.classList.toggle('opacity-40', !canSend);
         analysisSendBtnEl.classList.toggle('pointer-events-none', !canSend);
-        analysisSendBtnEl.title = sessionHasImage
+        analysisSendBtnEl.title = sessionReadyForChat
             ? 'Gửi câu hỏi'
-            : hasPendingImage
+            : (!sessionHasImage && hasPendingImage)
                 ? 'Gửi ảnh để segment'
                 : 'Hãy chọn ảnh trước';
     }
@@ -379,19 +501,20 @@ function renderSessionList() {
 
     sessionListEl.innerHTML = sessions.map(s => {
         const isActive = s.sessionId === sessionId;
-        const lastMsg = s.lastReply || s.lastQuestion || "Phiên đánh giá mới";
+        const lastMsg = normalizeText(s.lastReply || s.lastQuestion || "Phiên đánh giá mới");
         const time = s.updatedAt ? formatRelativeTime(new Date(s.updatedAt).getTime()) : "";
+        const safeSessionId = escapeAttribute(normalizeText(s.sessionId));
 
         return `
-            <div onclick="loadSessionHistory('${s.sessionId}')" class="group relative flex flex-col gap-1 rounded-xl px-3 py-2.5 transition-all cursor-pointer ${isActive ? 'bg-brand-primary/10 border-l-2 border-brand-primary' : 'hover:bg-white/5'}">
+            <div onclick="loadSessionHistory('${safeSessionId}')" class="group relative flex flex-col gap-1 rounded-xl px-3 py-2.5 transition-all cursor-pointer ${isActive ? 'bg-brand-primary/10 border-l-2 border-brand-primary' : 'hover:bg-white/5'}">
                 <div class="flex items-center justify-between">
                     <span class="text-[11px] font-bold tracking-tight ${isActive ? 'text-brand-primary' : 'text-ui-text'} truncate w-32">
-                        ${s.sessionId.substring(0, 8)}...
+                        ${escapeHtml(normalizeText(s.sessionId).substring(0, 8))}...
                     </span>
                     <span class="text-[9px] font-medium text-ui-muted opacity-60">${time}</span>
                 </div>
                 <p class="text-[10px] leading-tight text-ui-muted truncate opacity-80 group-hover:opacity-100">
-                    ${lastMsg.length > 50 ? lastMsg.substring(0, 50) + '...' : lastMsg}
+                    ${escapeHtml(lastMsg.length > 50 ? lastMsg.substring(0, 50) + '...' : lastMsg)}
                 </p>
             </div>
         `;
@@ -400,6 +523,7 @@ function renderSessionList() {
 
 async function loadSessionHistory(id) {
     if (!id) return;
+    const loadToken = ++sessionLoadToken;
 
     sessionId = id;
     localStorage.setItem('session_id', id);
@@ -407,9 +531,13 @@ async function loadSessionHistory(id) {
 
     // Reset state
     sessionHasImage = false;
+    sessionReadyForChat = false;
     currentMetrics = null;
     isProcessing = false;
     isSessionHydrating = true;
+    currentTaskStatus = '';
+    allowNextReplyToReplaceJob = false;
+    setCurrentJobId('');
     clearSelectedFiles();
     updateSessionImage(null);
     if (metricsPanelEl) metricsPanelEl.classList.add('hidden');
@@ -428,6 +556,7 @@ async function loadSessionHistory(id) {
         const res = await fetch(`${BACKEND_URL}/chat/sessions/${id}`);
         if (res.ok) {
             const data = await res.json();
+            if (loadToken !== sessionLoadToken || sessionId !== id) return;
             const dbSession = data.session;
             if (dbSession && dbSession.history && dbSession.history.length > 0) {
                 analysisMessages = dbSession.history.map((h, i) => {
@@ -436,9 +565,9 @@ async function loadSessionHistory(id) {
                         sender: (h.role === 'user' || h.sender === 'user') ? 'user' : 'bot',
                         text: h.content || h.text || '',
                         createdAt: h.createdAt ? new Date(h.createdAt).getTime() : Date.now(),
-                        imageUrls: []
+                        imageUrls: normalizeImageUrls(h.imageUrls || h.image_urls || [])
                     };
-                }).filter((msg) => !(msg.sender === 'user' && !msg.text.trim()));
+                }).filter((msg) => !(msg.sender === 'user' && !msg.text.trim() && msg.imageUrls.length === 0));
             } else {
                 analysisMessages = [];
             }
@@ -447,35 +576,42 @@ async function loadSessionHistory(id) {
 
         // Load tasks for this session to get metrics & session image
         const taskRes = await fetch(`${BACKEND_URL}/chat/tasks/${id}`);
+        if (loadToken !== sessionLoadToken || sessionId !== id) return;
         if (taskRes.ok) {
             const taskData = await taskRes.json();
             const tasks = taskData.tasks || [];
             if (tasks.length > 0) {
                 const latestTask = tasks[0];
-                currentJobId = latestTask.job_id || latestTask.jobId;
-                localStorage.setItem('current_job_id', currentJobId);
-
-                sessionHasImage = true;
-                updateSessionImage(latestTask.image_url || latestTask.imageUrl);
-
-                if (latestTask.metrics) {
-                    currentMetrics = latestTask.metrics;
-                    renderMetricsPanel(currentMetrics);
-                } else {
-                    renderMetricsPanel(null);
-                }
+                applySessionTaskState(latestTask);
 
                 isSessionHydrating = false;
-                unlockChat();
+                if (isProcessingTaskStatus(latestTask.status)) {
+                    lockChat();
+                } else {
+                    unlockChat();
+                }
                 renderAnalysisMessages(true);
             } else {
                 sessionHasImage = false;
+                sessionReadyForChat = false;
+                currentTaskStatus = '';
+                setCurrentJobId('');
                 updateSessionImage(null);
                 renderMetricsPanel(null);
                 isSessionHydrating = false;
                 unlockChat();
                 renderAnalysisMessages(true);
             }
+        } else {
+            sessionHasImage = false;
+            sessionReadyForChat = false;
+            currentTaskStatus = '';
+            setCurrentJobId('');
+            updateSessionImage(null);
+            renderMetricsPanel(null);
+            isSessionHydrating = false;
+            unlockChat();
+            renderAnalysisMessages(true);
         }
 
         if (activeView === 'gallery') renderGalleryForSession(id);
@@ -537,6 +673,7 @@ function switchView(view) {
 
 async function renderGalleryForSession(sid) {
     if (!galleryContentEl) return;
+    const loadToken = ++galleryLoadToken;
 
     galleryContentEl.innerHTML = '<div class="text-center text-ui-muted py-20 animate-pulse">Đang tải dữ liệu gallery...</div>';
 
@@ -544,6 +681,7 @@ async function renderGalleryForSession(sid) {
         const res = await fetch(`${BACKEND_URL}/chat/tasks/${sid}`);
         if (!res.ok) throw new Error('Failed to fetch tasks');
         const data = await res.json();
+        if (loadToken !== galleryLoadToken || sid !== sessionId) return;
         // Hỗ trợ cả snake_case và camelCase từ database
         const tasks = (data.tasks || []).filter(t => (t.mask_all_overlay || t.maskAllOverlay) && (t.image_url || t.imageUrl));
 
@@ -560,6 +698,8 @@ async function renderGalleryForSession(sid) {
 
         galleryContentEl.innerHTML = tasks.map((task, idx) => {
             const metricsHtml = task.metrics ? buildMetricsBadgesHtml(task.metrics) : '';
+            const originalImageUrl = escapeAttribute(resolveImageUrl(task.image_url || task.imageUrl));
+            const maskImageUrl = escapeAttribute(resolveImageUrl(task.mask_all_overlay || task.maskAllOverlay));
             return `
                 <div class="glass-card rounded-2xl overflow-hidden animate-slide-up" style="animation-delay: ${idx * 100}ms">
                     <!-- Legend -->
@@ -578,10 +718,10 @@ async function renderGalleryForSession(sid) {
                     <div class="comparison-slider" data-idx="${idx}">
                         <div class="comparison-container relative overflow-hidden" style="aspect-ratio: 16/10">
                             <!-- Base layer (Original Image) -->
-                            <img class="comparison-img-bottom absolute inset-0 w-full h-full object-cover" src="${resolveImageUrl(task.image_url || task.imageUrl)}" alt="Original" />
+                            <img class="comparison-img-bottom absolute inset-0 w-full h-full object-cover" src="${originalImageUrl}" alt="Original" />
                             
                             <!-- Overlay layer (Mask - Always Pure now, overlaid with 70% opacity by CSS) -->
-                            <img class="comparison-img-top absolute inset-0 w-full h-full object-cover" src="${resolveImageUrl(task.mask_all_overlay || task.maskAllOverlay)}" alt="Mask overlay" style="clip-path: inset(0 50% 0 0); opacity: 0.7;" />
+                            <img class="comparison-img-top absolute inset-0 w-full h-full object-cover" src="${maskImageUrl}" alt="Mask overlay" style="clip-path: inset(0 50% 0 0); opacity: 0.7;" />
                             <div class="comparison-handle absolute top-0 bottom-0 flex items-center justify-center cursor-ew-resize z-10" style="left: 50%; transform: translateX(-50%)">
                                 <div class="w-1 h-full bg-white/80 shadow-xl"></div>
                                 <div class="absolute w-10 h-10 rounded-full bg-white/20 backdrop-blur-md border-2 border-white/60 flex items-center justify-center shadow-2xl">
@@ -617,17 +757,22 @@ async function renderGalleryForSession(sid) {
 }
 
 function buildMetricsBadgesHtml(metrics) {
-    const statusBadge = metrics.is_flooded
+    const roadFloodRatio = toMetricNumber(metrics.road_flood_ratio);
+    const buildingFloodedCount = toMetricNumber(metrics.building_flooded_count);
+    const buildingTotalCount = toMetricNumber(metrics.building_total_count);
+    const vehicleOnFloodedRoad = toMetricNumber(metrics.vehicle_on_flooded_road);
+    const floodCoveragePercent = toMetricNumber(metrics.flood_coverage_percent);
+    const statusBadge = Boolean(metrics.is_flooded)
         ? '<span class="rounded-full bg-red-500/20 px-2.5 py-1 text-[9px] font-black text-red-400 uppercase flex items-center gap-1"><i data-lucide="alert-triangle" class="h-3 w-3"></i> Ngập</span>'
         : '<span class="rounded-full bg-emerald-500/20 px-2.5 py-1 text-[9px] font-black text-emerald-400 uppercase flex items-center gap-1"><i data-lucide="shield-check" class="h-3 w-3"></i> An toàn</span>';
 
     return `
         <div class="flex flex-wrap items-center gap-3">
             ${statusBadge}
-            <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="road" class="h-3 w-3 text-brand-primary"></i> Đường ngập: <strong class="text-brand-primary">${metrics.road_flood_ratio}%</strong></span>
-            <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="building" class="h-3 w-3 text-red-400"></i> Nhà ngập: <strong class="text-red-400">${metrics.building_flooded_count}</strong>/${metrics.building_total_count}</span>
-            <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="car" class="h-3 w-3 text-orange-400"></i> Xe: <strong class="text-orange-400">${metrics.vehicle_on_flooded_road}</strong></span>
-            <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="droplets" class="h-3 w-3 text-brand-primary"></i> Phủ ngập: <strong class="text-brand-primary">${metrics.flood_coverage_percent}%</strong></span>
+            <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="road" class="h-3 w-3 text-brand-primary"></i> Đường ngập: <strong class="text-brand-primary">${roadFloodRatio}%</strong></span>
+            <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="building" class="h-3 w-3 text-red-400"></i> Nhà ngập: <strong class="text-red-400">${buildingFloodedCount}</strong>/${buildingTotalCount}</span>
+            <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="car" class="h-3 w-3 text-orange-400"></i> Xe: <strong class="text-orange-400">${vehicleOnFloodedRoad}</strong></span>
+            <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="droplets" class="h-3 w-3 text-brand-primary"></i> Phủ ngập: <strong class="text-brand-primary">${floodCoveragePercent}%</strong></span>
         </div>
     `;
 }
@@ -703,13 +848,15 @@ function applyTheme() {
 function createNewSession() {
     sessionId = typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(2);
     localStorage.setItem('session_id', sessionId);
-    currentJobId = '';
-    localStorage.removeItem('current_job_id');
+    setCurrentJobId('');
     socket.emit('registerSession', { sessionId });
     sessionHasImage = false;
+    sessionReadyForChat = false;
     currentMetrics = null;
     isProcessing = false;
     isSessionHydrating = false;
+    currentTaskStatus = '';
+    allowNextReplyToReplaceJob = false;
 
     if (metricsPanelEl) metricsPanelEl.classList.add('hidden');
     updateSessionImage(null);
@@ -778,23 +925,41 @@ function renderAnalysisMessages(scrollToBottom = false) {
 
     analysisChatHistoryEl.classList.remove('analysis-chat-history--welcome');
     analysisChatHistoryEl.innerHTML = analysisMessages.map(msg => {
-        const safeText = (msg.text || '').trim();
+        const safeText = normalizeText(msg.text).trim();
         const hasText = safeText.length > 0;
+        const imageUrls = normalizeImageUrls(msg.imageUrls);
+        const hasImages = imageUrls.length > 0;
         const isBot = msg.sender === "bot" || msg.sender === "assistant";
         const authorLabel = isBot ? "Neural Engine" : "Người dùng";
 
-        if (!hasText && !(isBot && msg.progress !== undefined)) {
+        if (!hasText && !hasImages && !(isBot && msg.progress !== undefined)) {
             return '';
         }
 
-        const textHtml = hasText
-            ? `<div class="rounded-2xl p-5 shadow-sm ${isBot ? "rounded-bl-none glass-panel" : "chat-bubble-user"}">
-                    <p class="text-sm font-medium leading-relaxed whitespace-pre-wrap">${safeText.replace(/\n/g, '<br>')}</p>
+        const imageHtml = hasImages
+            ? `<div class="mb-3 flex flex-wrap gap-3 ${msg.sender === "user" ? "justify-end" : ""}">
+                    ${imageUrls.map((url, idx) => `
+                        <div class="overflow-hidden rounded-2xl border border-white/10 bg-black/20 shadow-lg">
+                            <img src="${escapeAttribute(url)}" alt="Chat attachment ${idx + 1}" class="block h-40 w-40 object-cover sm:h-48 sm:w-48" loading="lazy" />
+                        </div>
+                    `).join('')}
                </div>`
             : '';
 
-        const progressHtml = (isBot && msg.progress !== undefined)
-            ? `<div class="mt-3 w-full min-w-[200px]">
+        const textHtml = hasText
+            ? `<div class="rounded-2xl p-5 shadow-sm ${isBot ? "rounded-bl-none glass-panel" : "chat-bubble-user"}">
+                    <p class="text-sm font-medium leading-relaxed whitespace-pre-wrap">${escapeHtml(safeText).replace(/\n/g, '<br>')}</p>
+               </div>`
+            : '';
+
+        const progressHtml = (() => {
+            if (!(isBot && msg.progress !== undefined)) {
+                return '';
+            }
+
+            const progressValue = Math.min(Math.max(toMetricNumber(msg.progress), 0), 100);
+            const estSecondsRemaining = Math.max(toMetricNumber(msg.estSecondsRemaining), 0);
+            return `<div class="mt-3 w-full min-w-[200px]">
                     <div class="flex items-center justify-between mb-1.5">
                         <span class="text-[9px] font-black uppercase tracking-widest text-brand-primary flex items-center gap-1">
                             <span class="relative flex h-2 w-2">
@@ -803,14 +968,14 @@ function renderAnalysisMessages(scrollToBottom = false) {
                             </span>
                             Neural Progress
                         </span>
-                        <span class="text-[10px] font-black text-brand-primary">${msg.progress}%</span>
+                        <span class="text-[10px] font-black text-brand-primary">${progressValue}%</span>
                     </div>
                     <div class="h-2 w-full bg-white/5 rounded-full overflow-hidden border border-white/5 p-[1px]">
-                        <div class="h-full bg-gradient-to-r from-brand-primary/40 to-brand-primary rounded-full transition-all duration-700 cubic-bezier(0.4, 0, 0.2, 1)" style="width: ${msg.progress}%"></div>
+                        <div class="h-full bg-gradient-to-r from-brand-primary/40 to-brand-primary rounded-full transition-all duration-700 cubic-bezier(0.4, 0, 0.2, 1)" style="width: ${progressValue}%"></div>
                     </div>
-                    ${msg.estSecondsRemaining > 0 ? `<p class="mt-1.5 text-[9px] font-bold text-ui-muted opacity-50 uppercase tracking-widest text-right animate-pulse">Còn khoảng ${msg.estSecondsRemaining}s...</p>` : ''}
-               </div>`
-            : '';
+                    ${estSecondsRemaining > 0 ? `<p class="mt-1.5 text-[9px] font-bold text-ui-muted opacity-50 uppercase tracking-widest text-right animate-pulse">Còn khoảng ${estSecondsRemaining}s...</p>` : ''}
+               </div>`;
+        })();
 
         const iconName = isBot ? "bot" : "user";
 
@@ -820,6 +985,7 @@ function renderAnalysisMessages(scrollToBottom = false) {
                     <i data-lucide="${iconName}" class="w-5 h-5"></i>
                 </div>
                 <div class="max-w-[80%]">
+                    ${imageHtml}
                     ${textHtml}
                     ${progressHtml}
                     <p class="mt-2 px-1 text-[10px] font-bold uppercase tracking-[0.15em] text-ui-muted/50 ${msg.sender === "user" ? "text-right" : ""}">
@@ -892,10 +1058,10 @@ function renderSelectedPreviews() {
     analysisPreviewsEl.classList.remove('hidden');
     analysisPreviewsEl.innerHTML = `
         <div class="session-inline-media flex items-center gap-3 rounded-[22px] px-3 py-2.5">
-            <img src="${previewUrl}" alt="Session preview" class="h-14 w-14 shrink-0 rounded-2xl object-cover" />
+            <img src="${escapeAttribute(previewUrl)}" alt="Session preview" class="h-14 w-14 shrink-0 rounded-2xl object-cover" />
             <div class="min-w-0">
                 <p class="truncate text-xs font-bold text-ui-text">
-                    ${selectedFile?.name || 'Sẵn sàng để gửi'}
+                    ${escapeHtml(selectedFile?.name || 'Sẵn sàng để gửi')}
                 </p>
                 <p class="text-[10px] text-ui-muted/70">
                     Bạn có thể đổi ảnh trước khi gửi.
@@ -938,13 +1104,13 @@ async function handleSendMessage() {
     analysisChatInputEl.value = '';
     syncComposerState();
 
-    if (text) {
+    if (text || filesToSend.length > 0) {
         analysisMessages.push({
             id: Date.now().toString(),
             sender: 'user',
             text,
             createdAt: Date.now(),
-            imageUrls: []
+            imageUrls: filesToSend.length > 0 && selectedPreviewUrl ? [selectedPreviewUrl] : []
         });
     }
 
@@ -962,6 +1128,8 @@ async function handleSendMessage() {
     if (filesToSend.length > 0) {
         // Image upload flow
         sessionHasImage = true;
+        sessionReadyForChat = false;
+        currentTaskStatus = 'queued';
         syncComposerState();
 
         try {
@@ -982,8 +1150,7 @@ async function handleSendMessage() {
             if (uploadRes.ok) {
                 const uploadData = await uploadRes.json();
                 if (uploadData.jobId) {
-                    currentJobId = uploadData.jobId;
-                    localStorage.setItem('current_job_id', currentJobId);
+                    setCurrentJobId(uploadData.jobId);
                 }
                 if (uploadData.sessionId) {
                     sessionId = uploadData.sessionId;
@@ -997,6 +1164,9 @@ async function handleSendMessage() {
                 const lastBot = [...analysisMessages].reverse().find(m => m.sender === 'bot');
                 if (lastBot) lastBot.text = `❌ Lỗi upload: ${errData.message || uploadRes.statusText}`;
                 sessionHasImage = false;
+                sessionReadyForChat = false;
+                currentTaskStatus = 'error';
+                setCurrentJobId('');
                 unlockChat();
                 renderAnalysisMessages(true);
             }
@@ -1006,11 +1176,15 @@ async function handleSendMessage() {
             const lastBot = [...analysisMessages].reverse().find(m => m.sender === 'bot');
             if (lastBot) lastBot.text = `❌ Lỗi kết nối: ${error.message}`;
             sessionHasImage = false;
+            sessionReadyForChat = false;
+            currentTaskStatus = 'error';
+            setCurrentJobId('');
             unlockChat();
             renderAnalysisMessages(true);
         }
     } else {
         // Text-only follow-up (chat with VLM)
+        allowNextReplyToReplaceJob = true;
         socket.emit('sendMessage', {
             message: text,
             jobId: currentJobId || undefined,
@@ -1023,7 +1197,10 @@ async function handleSendMessage() {
 
 analysisSendBtnEl?.addEventListener('click', handleSendMessage);
 analysisChatInputEl?.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') handleSendMessage();
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSendMessage();
+    }
 });
 analysisFileInputEl?.addEventListener('change', (e) => {
     if (sessionHasImage || isProcessing) return;
