@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 
-SERVICE_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def install_api_stubs() -> None:
@@ -68,30 +68,30 @@ def install_api_stubs() -> None:
     fastapi.HTTPException = HTTPException
     sys.modules["fastapi"] = fastapi
 
-    db_handler = types.ModuleType("db_handler")
+    db_handler = types.ModuleType("utils.segmentation.db_handler")
     db_handler.TABLE_NAME = "task_image"
     db_handler.get_data = lambda _session_id: [
         {"image_url": "https://example.com/image.png"}
     ]
     db_handler.update_data = lambda *args, **kwargs: None
-    sys.modules["db_handler"] = db_handler
+    sys.modules["utils.segmentation.db_handler"] = db_handler
 
-    model_handler = types.ModuleType("model_handler")
+    model_handler = types.ModuleType("services.segmentation_worker.model_handler")
     model_handler.job_status = {}
     model_handler.load_model = lambda: object()
     model_handler.run_segmentation_task = object()
-    sys.modules["model_handler"] = model_handler
+    sys.modules["services.segmentation_worker.model_handler"] = model_handler
 
 
 class ApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         install_api_stubs()
-        sys.path.insert(0, str(SERVICE_DIR))
+        sys.path.insert(0, str(REPO_ROOT))
 
     def setUp(self):
-        sys.modules.pop("api", None)
-        self.api = importlib.import_module("api")
+        sys.modules.pop("services.segmentation_worker.api", None)
+        self.api = importlib.import_module("services.segmentation_worker.api")
 
     def test_inference_enqueues_progress_url_in_background_task(self):
         self.api.predictor = object()

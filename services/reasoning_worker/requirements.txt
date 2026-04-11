@@ -6,6 +6,5 @@ pillow
 pydantic
 python-dotenv
 requests
-sumy
 supabase
 uvicorn

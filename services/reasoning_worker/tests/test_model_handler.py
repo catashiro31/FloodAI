@@ -42,57 +42,20 @@ def install_model_handler_stubs() -> None:
     requests.post = lambda *args, **kwargs: None
     sys.modules["requests"] = requests
 
-    sumy = types.ModuleType("sumy")
-    sys.modules["sumy"] = sumy
-
-    sumy_nlp = types.ModuleType("sumy.nlp")
-    sys.modules["sumy.nlp"] = sumy_nlp
-    tokenizers = types.ModuleType("sumy.nlp.tokenizers")
-    tokenizers.Tokenizer = lambda *_args, **_kwargs: object()
-    sys.modules["sumy.nlp.tokenizers"] = tokenizers
-
-    parsers = types.ModuleType("sumy.parsers")
-    sys.modules["sumy.parsers"] = parsers
-    plaintext = types.ModuleType("sumy.parsers.plaintext")
-
-    class PlaintextParser:
-        @staticmethod
-        def from_string(text, _tokenizer):
-            return types.SimpleNamespace(document=text)
-
-    plaintext.PlaintextParser = PlaintextParser
-    sys.modules["sumy.parsers.plaintext"] = plaintext
-
-    summarizers = types.ModuleType("sumy.summarizers")
-    sys.modules["sumy.summarizers"] = summarizers
-    lsa = types.ModuleType("sumy.summarizers.lsa")
-
-    class LsaSummarizer:
-        def __call__(self, _document, _target_count):
-            return []
-
-    lsa.LsaSummarizer = LsaSummarizer
-    sys.modules["sumy.summarizers.lsa"] = lsa
-
-    file_handler = types.ModuleType("services.reasoning_worker.file_handler")
+    file_handler = types.ModuleType("utils.reasoning.file_handler")
     file_handler.encode_image_base64 = lambda _source: "encoded"
-    sys.modules["services.reasoning_worker.file_handler"] = file_handler
+    sys.modules["utils.reasoning.file_handler"] = file_handler
 
-    image_analizer = types.ModuleType("services.reasoning_worker.image_analizer")
-    image_analizer.analyze_flood_mask = lambda _source: {
-      "flooded_road_pct_of_image": 10.5
-    }
-    sys.modules["services.reasoning_worker.image_analizer"] = image_analizer
-
-    db_handler = types.ModuleType("services.reasoning_worker.db_handler")
+    db_handler = types.ModuleType("utils.reasoning.db_handler")
     db_handler.MASK_SOURCE_COLUMNS = ["mask_url"]
     db_handler.STATUS_COLUMN = "status"
     db_handler.TABLE_NAME = "task_reasoning"
     db_handler.VLM_OUTPUT_COLUMN = "vlm_analysis"
     db_handler.get_data = lambda _job_id: []
+    db_handler.get_image_data_by_session = lambda _session_id: []
     db_handler.update_data = lambda *args, **kwargs: None
     db_handler.upsert_session = lambda *args, **kwargs: None
-    sys.modules["services.reasoning_worker.db_handler"] = db_handler
+    sys.modules["utils.reasoning.db_handler"] = db_handler
 
 
 class ModelHandlerTests(unittest.TestCase):
@@ -234,6 +197,57 @@ class ModelHandlerTests(unittest.TestCase):
 
         self.assertEqual(ctx.exception.code, "OLLAMA_TIMEOUT")
         self.assertEqual(len(memory.turns), 0)
+
+    def test_run_reasoning_task_loads_metrics_from_task_image_by_session(self):
+        memory = self.model_handler.ConversationMem()
+        client = object()
+
+        with patch.object(
+            self.model_handler,
+            "get_data",
+            return_value=[
+                {
+                    "session_id": "session-42",
+                    "image_url": "image-url",
+                    "mask_url": "mask-url",
+                }
+            ],
+        ), patch.object(
+            self.model_handler,
+            "get_image_data_by_session",
+            return_value=[{"metrics": {"floodCoveragePercent": 12.5}}],
+        ) as mock_get_image_data, patch.dict(
+            self.model_handler.conversation_store,
+            {"session-42": memory},
+            clear=True,
+        ), patch.object(
+            self.model_handler,
+            "return_response",
+            return_value="Reasoned answer",
+        ), patch.object(
+            self.model_handler,
+            "update_data",
+        ), patch.object(
+            self.model_handler,
+            "send_vlm_callback",
+        ), patch.object(
+            self.model_handler,
+            "upsert_session",
+        ) as mock_upsert:
+            answer = self.model_handler.run_reasoning_task(
+                client=client,
+                generation_config={"num_predict": 32},
+                job_id="job-1",
+                session_id="",
+                question="",
+                callback_url="",
+            )
+
+        self.assertEqual(answer, "Reasoned answer")
+        mock_get_image_data.assert_called_once_with("session-42")
+        self.assertGreaterEqual(mock_upsert.call_count, 1)
+        first_context = mock_upsert.call_args_list[0].args[2]
+        self.assertEqual(first_context["mask_metrics"], {"floodCoveragePercent": 12.5})
 
     def test_client_retries_loading_model_response(self):
         client = self.model_handler.OllamaClient(

@@ -1,6 +1,7 @@
 import os
 import sys
 import random
+from pathlib import Path
 import numpy as np
 import cv2
 import torch
@@ -10,7 +11,11 @@ from albumentations.pytorch import ToTensorV2
 import base64
 import time
 
-from compute_metrics import compute_metrics
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from utils.segmentation.compute_metrics import compute_metrics
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 repo_root = os.path.abspath(os.path.join(current_dir, "..", ".."))

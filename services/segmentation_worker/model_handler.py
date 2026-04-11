@@ -2,15 +2,27 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import time
+from pathlib import Path
 from typing import Any, Dict
 
 from dotenv import load_dotenv
 import requests
 from huggingface_hub import hf_hub_download, snapshot_download
 
-from db_handler import MASK_BUCKET_NAME, TABLE_NAME, get_data, update_data, upload_image_to_bucket
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from utils.segmentation.db_handler import (
+    MASK_BUCKET_NAME,
+    TABLE_NAME,
+    get_data,
+    update_data,
+    upload_image_to_bucket,
+)
 
 load_dotenv()
 
@@ -47,7 +59,7 @@ job_status: Dict[str, dict] = {}
 
 def load_model():
     import torch
-    from inference import Config, ComprehensiveVisualizer
+    from services.segmentation_worker.inference import Config, ComprehensiveVisualizer
 
     # model_weight = get_model(hf_repo, hf_model_filename)
     model_weight = "best_ssl_model.pth"

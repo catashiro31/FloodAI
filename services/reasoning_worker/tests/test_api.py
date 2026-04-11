@@ -64,14 +64,14 @@ def install_api_stubs() -> None:
     fastapi.HTTPException = HTTPException
     sys.modules["fastapi"] = fastapi
 
-    db_handler = types.ModuleType("services.reasoning_worker.db_handler")
+    db_handler = types.ModuleType("utils.reasoning.db_handler")
     db_handler.STATUS_COLUMN = "status"
     db_handler.TABLE_NAME = "task_reasoning"
     db_handler.VLM_OUTPUT_COLUMN = "vlm_analysis"
     db_handler.get_data = lambda _job_id: []
     db_handler.update_data = lambda *args, **kwargs: None
     db_handler.supabase = object()
-    sys.modules["services.reasoning_worker.db_handler"] = db_handler
+    sys.modules["utils.reasoning.db_handler"] = db_handler
 
     model_handler = types.ModuleType("services.reasoning_worker.model_handler")
     model_handler.job_status = {}

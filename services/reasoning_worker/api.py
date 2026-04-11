@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from uuid import UUID
 
 import nest_asyncio
@@ -10,22 +12,25 @@ from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel
 
-try:
-    from FloodAI.services.reasoning_worker.db_handler import STATUS_COLUMN, TABLE_NAME, VLM_OUTPUT_COLUMN, get_data, supabase, update_data
-    from FloodAI.services.reasoning_worker.model_handler import (
-        build_generation_config,
-        job_status,
-        load_model,
-        run_reasoning_task,
-    )
-except Exception:
-    from .db_handler import STATUS_COLUMN, TABLE_NAME, VLM_OUTPUT_COLUMN, get_data, supabase, update_data
-    from .model_handler import (
-        build_generation_config,
-        job_status,
-        load_model,
-        run_reasoning_task,
-    )
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from utils.reasoning.db_handler import (
+    STATUS_COLUMN,
+    TABLE_NAME,
+    VLM_OUTPUT_COLUMN,
+    get_data,
+    supabase,
+    update_data,
+)
+
+from services.reasoning_worker.model_handler import (
+    build_generation_config,
+    job_status,
+    load_model,
+    run_reasoning_task,
+)
 
 load_dotenv()
 
@@ -99,10 +104,7 @@ async def reasoning(request: ReasoningRequest, background_tasks: BackgroundTasks
         db_session_id = str(row.get("session_id") or request.session_id or job_id)
 
         if request.reset:
-            try:
-                from FloodAI.services.reasoning_worker.model_handler import conversation_store
-            except Exception:
-                from .model_handler import conversation_store
+            from services.reasoning_worker.model_handler import conversation_store
 
             if db_session_id in conversation_store:
                 conversation_store[db_session_id].clear()

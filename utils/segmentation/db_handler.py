@@ -2,10 +2,10 @@ import os
 import tempfile
 from typing import Any, Optional
 
-from supabase import Client, create_client
 from dotenv import load_dotenv
+from supabase import Client, create_client
 
-from file_handler import convert_base64_2_bytes
+from utils.segmentation.file_handler import convert_base64_2_bytes
 
 load_dotenv()
 
@@ -18,6 +18,7 @@ supabase: Optional[Client] = None
 if DB_URL and DB_KEY:
     supabase = create_client(DB_URL, DB_KEY)
 
+
 def get_data(session_id: str):
     if not supabase:
         return []
@@ -28,47 +29,49 @@ def get_data(session_id: str):
         .execute()
     )
     return response.data or []
-    
+
+
 def update_data(col: str, value: Any, table_name: str, query_col: str, query_value: str):
     if not supabase:
         return
     try:
-        data = {col : value}
+        data = {col: value}
         response = supabase.table(table_name).update(data).eq(query_col, query_value).execute()
-        
+
         rows = response.data or []
         if len(rows) > 0:
-            print(f"✅ Đã cập nhật thành công cho {query_col}: {query_value}")
+            print(f"Updated successfully for {query_col}: {query_value}")
         else:
-            print(f"⚠️ Không tìm thấy hàng nào ở {query_col} có : {query_value}")
-    except Exception as e:
-        print(f"❌ Lỗi khi cập nhật database: {e}")
+            print(f"No row found for {query_col}: {query_value}")
+    except Exception as exc:
+        print(f"Database update failed: {exc}")
+
 
 def upload_image_to_bucket(image_name: str, image_content: str, bucket_name: str):
     temp_path = None
     if not supabase:
-        print("⚠️ Supabase credentials missing. Skipping upload.")
+        print("Supabase credentials missing. Skipping upload.")
         return None
-    
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
         tmpfile.write(convert_base64_2_bytes(image_content))
         temp_path = tmpfile.name
 
     try:
-        with open(temp_path, "rb") as f:
+        with open(temp_path, "rb") as file_obj:
             supabase.storage.from_(bucket_name).upload(
-                path = image_name, 
-                file = f, 
-                file_options = {
+                path=image_name,
+                file=file_obj,
+                file_options={
                     "content-type": "image/png",
                     "upsert": "true",
-                }
+                },
             )
 
             url = supabase.storage.from_(bucket_name).get_public_url(image_name)
             return url
-    except Exception as e:
-        print(f"❌ Failed to upload to Supabase: {e}")
+    except Exception as exc:
+        print(f"Failed to upload to Supabase: {exc}")
     finally:
         if temp_path and os.path.exists(temp_path):
             try:

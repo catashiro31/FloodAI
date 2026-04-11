@@ -1,5 +1,7 @@
 import os
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from uuid import UUID
 
 import nest_asyncio
@@ -8,8 +10,16 @@ from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel
 
-from db_handler import TABLE_NAME, get_data, update_data
-from model_handler import job_status, load_model, run_segmentation_task
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from services.segmentation_worker.model_handler import (
+    job_status,
+    load_model,
+    run_segmentation_task,
+)
+from utils.segmentation.db_handler import TABLE_NAME, get_data, update_data
 
 load_dotenv()
 

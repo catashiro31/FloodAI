@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-SERVICE_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def install_python_stubs() -> None:
@@ -46,7 +46,7 @@ def install_python_stubs() -> None:
     huggingface_hub.snapshot_download = lambda *args, **kwargs: "snapshot"
     sys.modules["huggingface_hub"] = huggingface_hub
 
-    db_handler = types.ModuleType("db_handler")
+    db_handler = types.ModuleType("utils.segmentation.db_handler")
     db_handler.MASK_BUCKET_NAME = "masks"
     db_handler.TABLE_NAME = "task_image"
     db_handler.get_data = lambda _session_id: [{"image_url": "https://example.com/image.png"}]
@@ -54,18 +54,20 @@ def install_python_stubs() -> None:
     db_handler.upload_image_to_bucket = (
         lambda image_name, _mask, _bucket: f"https://cdn.example.com/{image_name}"
     )
-    sys.modules["db_handler"] = db_handler
+    sys.modules["utils.segmentation.db_handler"] = db_handler
 
 
 class ModelHandlerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         install_python_stubs()
-        sys.path.insert(0, str(SERVICE_DIR))
+        sys.path.insert(0, str(REPO_ROOT))
 
     def setUp(self):
-        sys.modules.pop("model_handler", None)
-        self.model_handler = importlib.import_module("model_handler")
+        sys.modules.pop("services.segmentation_worker.model_handler", None)
+        self.model_handler = importlib.import_module(
+            "services.segmentation_worker.model_handler"
+        )
         self.requests = sys.modules["requests"]
         self.requests.calls = []
 

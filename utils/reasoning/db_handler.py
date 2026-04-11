@@ -12,6 +12,7 @@ TABLE_NAME = os.getenv("SUPABASE_TABLE_NAME", "tasks")
 STATUS_COLUMN = os.getenv("STATUS_COLUMN", "status")
 VLM_OUTPUT_COLUMN = os.getenv("VLM_OUTPUT_COLUMN", "vlm_analysis")
 SESSION_TABLE = os.getenv("SESSION_TABLE_NAME", "sessions")
+TASK_IMAGE_TABLE = os.getenv("TASK_IMAGE_TABLE_NAME", "task_image")
 MASK_SOURCE_COLUMNS = [
     os.getenv("MASK_SOURCE_COLUMN", "mask_all_overlay"),
     "mask_all_overlay",
@@ -35,6 +36,20 @@ def get_data(job_id: str) -> list[dict[str, Any]]:
     if not supabase:
         return []
     response = supabase.table(TABLE_NAME).select("*").eq("job_id", job_id).execute()
+    return response.data or []
+
+
+def get_image_data_by_session(session_id: str) -> list[dict[str, Any]]:
+    if not supabase:
+        return []
+    response = (
+        supabase.table(TASK_IMAGE_TABLE)
+        .select("*")
+        .eq("session_id", session_id)
+        .order("updated_at", desc=True)
+        .limit(1)
+        .execute()
+    )
     return response.data or []
 
 

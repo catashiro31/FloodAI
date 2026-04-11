@@ -2,42 +2,33 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import requests
 from dotenv import load_dotenv
-from sumy.nlp.tokenizers import Tokenizer
-from sumy.parsers.plaintext import PlaintextParser
-from sumy.summarizers.lsa import LsaSummarizer
 
-try:
-    from FloodAI.services.reasoning_worker.db_handler import (
-        MASK_SOURCE_COLUMNS,
-        STATUS_COLUMN,
-        TABLE_NAME,
-        VLM_OUTPUT_COLUMN,
-        get_data,
-        update_data,
-        upsert_session,
-    )
-    from FloodAI.services.reasoning_worker.file_handler import encode_image_base64
-    from FloodAI.services.reasoning_worker.image_analizer import analyze_flood_mask
-except Exception:
-    from .db_handler import (
-        MASK_SOURCE_COLUMNS,
-        STATUS_COLUMN,
-        TABLE_NAME,
-        VLM_OUTPUT_COLUMN,
-        get_data,
-        update_data,
-        upsert_session,
-    )
-    from .file_handler import encode_image_base64
-    from .image_analizer import analyze_flood_mask
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from utils.reasoning.db_handler import (
+    MASK_SOURCE_COLUMNS,
+    STATUS_COLUMN,
+    TABLE_NAME,
+    VLM_OUTPUT_COLUMN,
+    get_data,
+    get_image_data_by_session,
+    update_data,
+    upsert_session,
+)
+from utils.reasoning.file_handler import encode_image_base64
 
 load_dotenv()
 
@@ -49,6 +40,10 @@ OLLAMA_RETRY_ATTEMPTS = max(1, int(os.getenv("OLLAMA_RETRY_ATTEMPTS", "3")))
 OLLAMA_RETRY_BACKOFF_SECONDS = float(os.getenv("OLLAMA_RETRY_BACKOFF_SECONDS", "5"))
 OLLAMA_FALLBACK_TIMEOUT = int(os.getenv("OLLAMA_FALLBACK_TIMEOUT_SECONDS", "45"))
 OLLAMA_FALLBACK_NUM_PREDICT = int(os.getenv("OLLAMA_FALLBACK_NUM_PREDICT", "160"))
+CONVERSATION_SUMMARY_MAX_CHARS = max(
+    120,
+    int(os.getenv("CONVERSATION_SUMMARY_MAX_CHARS", "320")),
+)
 PROCESSING_VLM_STATUS = "processing_vlm"
 SUCCESS_VLM_STATUS = "success_vlm"
 
@@ -92,7 +87,6 @@ class OllamaClientError(RuntimeError):
 @dataclass
 class ConversationMem:
     turns: list[dict[str, str]] = field(default_factory=list)
-    lsa_summarizer: LsaSummarizer = field(default_factory=LsaSummarizer, init=False, repr=False)
 
     def add(self, user: str, assistant: str) -> None:
         self.turns.append({"user": user, "assistant": assistant})
@@ -114,23 +108,30 @@ class ConversationMem:
     def _count_sentences(paragraph: str) -> int:
         return len([s.strip() for s in paragraph.split(".") if s.strip()])
 
+    @staticmethod
+    def _trim_to_limit(text: str) -> str:
+        if len(text) <= CONVERSATION_SUMMARY_MAX_CHARS:
+            return text
+        return text[: CONVERSATION_SUMMARY_MAX_CHARS - 3].rstrip() + "..."
+
+    @staticmethod
+    def _split_sentences(text: str) -> list[str]:
+        return [part.strip() for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
+
     def _summarize_text(self, text: str) -> str:
-        cleaned = text.strip()
+        cleaned = " ".join(text.split())
         if not cleaned:
             return ""
 
         sentence_count = self._count_sentences(cleaned)
-        if sentence_count <= 1:
-            return cleaned
+        if sentence_count <= 2:
+            return self._trim_to_limit(cleaned)
 
-        target_count = sentence_count // 2 if sentence_count > 5 else max(1, sentence_count - 1)
-        try:
-            parser = PlaintextParser.from_string(cleaned, Tokenizer("english"))
-            summary_sentences = self.lsa_summarizer(parser.document, target_count)
-            summary_text = " ".join(str(sentence) for sentence in summary_sentences).strip()
-            return summary_text or cleaned
-        except Exception:
-            return cleaned
+        sentences = self._split_sentences(cleaned)
+        if len(sentences) >= 2:
+            return self._trim_to_limit(f"{sentences[0]} ... {sentences[-1]}")
+
+        return self._trim_to_limit(cleaned)
 
     def summary_conversation(self) -> list[dict[str, str]]:
         if not self.turns:
@@ -263,6 +264,22 @@ def _resolve_mask_source(row: Dict[str, Any]) -> Optional[str]:
         if isinstance(value, str) and value.strip():
             return value
     return None
+
+
+def _normalize_mask_metrics(raw_metrics: Any) -> dict[str, Any]:
+    if isinstance(raw_metrics, dict):
+        return raw_metrics
+
+    if isinstance(raw_metrics, str) and raw_metrics.strip():
+        try:
+            parsed = json.loads(raw_metrics)
+        except json.JSONDecodeError:
+            return {"raw_metrics": raw_metrics}
+        if isinstance(parsed, dict):
+            return parsed
+        return {"raw_metrics": parsed}
+
+    return {}
 
 
 def _road_prompt() -> tuple[list[int], str]:
@@ -404,21 +421,18 @@ def start_session(
     task_name: str,
     image_source: str,
     mask_source: str,
+    mask_stats: Optional[Dict[str, Any]],
     conversation: ConversationMem,
 ) -> SessionState:
     image_b64 = encode_image_base64(image_source)
     mask_b64 = encode_image_base64(mask_source)
-
-    try:
-        mask_stats = analyze_flood_mask(mask_source)
-    except Exception as exc:
-        mask_stats = {"error": f"Failed to parse mask metrics: {exc}"}
+    resolved_mask_stats = mask_stats if isinstance(mask_stats, dict) else {}
 
     context = build_context_prompt(
         task_name=task_name,
         image_source=image_source,
         mask_source=mask_source,
-        mask_stats=mask_stats,
+        mask_stats=resolved_mask_stats,
         history_summary=conversation.pretty(),
     )
 
@@ -429,7 +443,7 @@ def start_session(
             "task_name": task_name,
             "image_source": image_source,
             "mask_source": mask_source,
-            "mask_metrics": mask_stats,
+            "mask_metrics": resolved_mask_stats,
             "history_summary": conversation.pretty(),
             "updatedAt": datetime.now(timezone.utc).isoformat(),
         },
@@ -444,7 +458,7 @@ def start_session(
         mask_source=mask_source,
         image_b64=image_b64,
         mask_b64=mask_b64,
-        mask_stats=mask_stats,
+        mask_stats=resolved_mask_stats,
         conversation=conversation,
         context=context,
     )
@@ -586,8 +600,14 @@ def run_reasoning_task(
             return None
 
         row = data[0]
+        actual_session_id = str(row.get("session_id") or actual_session_id)
         image_source = row.get("image_url") or row.get("url_image")
         mask_source = _resolve_mask_source(row)
+        image_task_rows = get_image_data_by_session(actual_session_id)
+        image_task_row = image_task_rows[0] if image_task_rows else {}
+        mask_stats = _normalize_mask_metrics(image_task_row.get("metrics"))
+        if not mask_source and image_task_row:
+            mask_source = _resolve_mask_source(image_task_row)
 
         if not image_source:
             error_msg = "Image URL not found for this job_id"
@@ -619,6 +639,7 @@ def run_reasoning_task(
                 task_name="flood_reasoning",
                 image_source=image_source,
                 mask_source=mask_source,
+                mask_stats=mask_stats,
                 conversation=memory,
             )
             answer = return_response(
