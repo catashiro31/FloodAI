@@ -1,0 +1,11 @@
+fastapi
+nest-asyncio
+numpy
+opencv-python-headless
+pillow
+pydantic
+python-dotenv
+requests
+sumy
+supabase
+uvicorn
