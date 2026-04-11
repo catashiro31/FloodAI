@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Optional
 
 from dotenv import load_dotenv
 from supabase import Client, create_client
 
-load_dotenv()
+REASONING_ENV_PATH = (
+    Path(__file__).resolve().parents[2] / "services" / "reasoning_worker" / ".env"
+)
+load_dotenv(REASONING_ENV_PATH)
 
-TABLE_NAME = os.getenv("SUPABASE_TABLE_NAME", "tasks")
+TABLE_NAME = os.getenv("SUPABASE_TABLE_NAME", "task_reasoning")
 STATUS_COLUMN = os.getenv("STATUS_COLUMN", "status")
 VLM_OUTPUT_COLUMN = os.getenv("VLM_OUTPUT_COLUMN", "vlm_analysis")
 SESSION_TABLE = os.getenv("SESSION_TABLE_NAME", "sessions")

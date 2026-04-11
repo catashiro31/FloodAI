@@ -30,7 +30,7 @@ from utils.reasoning.db_handler import (
 )
 from utils.reasoning.file_handler import encode_image_base64
 
-load_dotenv()
+load_dotenv(Path(__file__).with_name(".env"))
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:e2b-it-q4_K_M")

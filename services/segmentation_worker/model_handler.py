@@ -24,7 +24,8 @@ from utils.segmentation.db_handler import (
     upload_image_to_bucket,
 )
 
-load_dotenv()
+load_dotenv(Path(__file__).with_name(".env"))
+
 
 important_class = list(range(1, 10))
 job_status: Dict[str, dict] = {}
@@ -62,7 +63,8 @@ def load_model():
     from services.segmentation_worker.inference import Config, ComprehensiveVisualizer
 
     # model_weight = get_model(hf_repo, hf_model_filename)
-    model_weight = "best_ssl_model.pth"
+    
+    model_weight = os.getenv("MODEL_WEIGHT")
     if not model_weight:
         print("No model weight available from Hugging Face.")
         return None

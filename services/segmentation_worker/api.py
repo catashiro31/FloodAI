@@ -21,7 +21,7 @@ from services.segmentation_worker.model_handler import (
 )
 from utils.segmentation.db_handler import TABLE_NAME, get_data, update_data
 
-load_dotenv()
+load_dotenv(Path(__file__).with_name(".env"))
 
 try:
     import torch

@@ -32,7 +32,7 @@ from services.reasoning_worker.model_handler import (
     run_reasoning_task,
 )
 
-load_dotenv()
+load_dotenv(Path(__file__).with_name(".env"))
 
 port = int(os.getenv("PORT", "8010"))
 PROCESSING_VLM_STATUS = "processing_vlm"
