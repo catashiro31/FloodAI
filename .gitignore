@@ -95,3 +95,7 @@ temp/
 
 # --- Docker Persistence ---
 ollama_data/
+
+# --- Agentic Coding --
+.omx/
+.codex/

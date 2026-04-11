@@ -1,0 +1,13 @@
+{
+  "name": "floodai-root",
+  "private": true,
+  "scripts": {
+    "gateway:install": "npm --prefix apps/api-gateway install",
+    "gateway:dev": "npm --prefix apps/api-gateway run start:dev",
+    "gateway:start": "npm --prefix apps/api-gateway run start",
+    "gateway:build": "npm --prefix apps/api-gateway run build",
+    "gateway:test": "npm --prefix apps/api-gateway run test",
+    "worker:segmentation": "python -m services.segmentation_worker.api",
+    "worker:reasoning": "python -m services.reasoning_worker.api"
+  }
+}

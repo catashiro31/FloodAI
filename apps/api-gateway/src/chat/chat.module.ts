@@ -5,6 +5,7 @@ import { TasksModule } from "../tasks/tasks.module";
 import { ConversationModule } from "../conversation/conversation.module";
 import { OrchestrationModule } from "../orchestration/orchestration.module";
 import { RealtimeModule } from "../realtime/realtime.module";
+import { WebhookAuthService } from "./webhook-auth.service";
 
 @Module({
   imports: [
@@ -14,7 +15,7 @@ import { RealtimeModule } from "../realtime/realtime.module";
     forwardRef(() => RealtimeModule),
   ],
   controllers: [ChatController],
-  providers: [ChatService],
+  providers: [ChatService, WebhookAuthService],
   exports: [ChatService],
 })
 export class ChatModule {}

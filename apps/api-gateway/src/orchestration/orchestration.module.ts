@@ -5,10 +5,9 @@ import { TasksModule } from "../tasks/tasks.module";
 import { OrchestrationService } from "./orchestration.service";
 import { SegmentationClient } from "./segmentation.client";
 import { VlmClient } from "./vlm.client";
-import { VlmModule } from "../vlm/vlm.module";
 
 @Module({
-  imports: [HttpModule, TasksModule, forwardRef(() => RealtimeModule), VlmModule],
+  imports: [HttpModule, TasksModule, forwardRef(() => RealtimeModule)],
   providers: [SegmentationClient, VlmClient, OrchestrationService],
   exports: [OrchestrationService],
 })

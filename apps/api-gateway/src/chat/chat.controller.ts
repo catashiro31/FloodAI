@@ -6,22 +6,25 @@ import {
   Param,
   Post,
   Query,
-  Res,
   UploadedFile,
   UseInterceptors,
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
-import { Response } from "express";
 import { ChatService } from "./chat.service";
 import { CreateChatDto } from "./dto/create-chat.dto";
+import { ProgressCallbackDto } from "./dto/progress-callback.dto";
 import { SegmentationCallbackDto } from "./dto/segmentation-callback.dto";
 import { UploadChatDto } from "./dto/upload-chat.dto";
 import { VlmCallbackDto } from "./dto/vlm-callback.dto";
+import { WebhookAuthService } from "./webhook-auth.service";
+
+const MAX_UPLOAD_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 
 @Controller("chat")
 export class ChatController {
   constructor(
     private readonly chatService: ChatService,
+    private readonly webhookAuthService: WebhookAuthService,
   ) {}
 
   @Post()
@@ -35,7 +38,13 @@ export class ChatController {
   }
 
   @Post("upload")
-  @UseInterceptors(FileInterceptor("file"))
+  @UseInterceptors(
+    FileInterceptor("file", {
+      limits: {
+        fileSize: MAX_UPLOAD_FILE_SIZE_BYTES,
+      },
+    }),
+  )
   async uploadFile(
     @UploadedFile() file: Express.Multer.File,
     @Body() body: UploadChatDto,
@@ -46,17 +55,32 @@ export class ChatController {
   }
 
   @Post("webhook/segmentation")
-  async segmentationWebhook(@Body() body: SegmentationCallbackDto) {
+  async segmentationWebhook(
+    @Body() body: SegmentationCallbackDto,
+    @Headers("x-webhook-secret") webhookSecret?: string,
+    @Query("token") webhookToken?: string,
+  ) {
+    this.webhookAuthService.assertAuthorized(webhookSecret, webhookToken);
     return this.chatService.handleSegmentationWebhook(body);
   }
 
   @Post("webhook/progress")
-  async progressWebhook(@Body() body: any) {
+  async progressWebhook(
+    @Body() body: ProgressCallbackDto,
+    @Headers("x-webhook-secret") webhookSecret?: string,
+    @Query("token") webhookToken?: string,
+  ) {
+    this.webhookAuthService.assertAuthorized(webhookSecret, webhookToken);
     return this.chatService.handleProgressWebhook(body);
   }
 
   @Post("webhook/vlm")
-  async vlmWebhook(@Body() body: VlmCallbackDto) {
+  async vlmWebhook(
+    @Body() body: VlmCallbackDto,
+    @Headers("x-webhook-secret") webhookSecret?: string,
+    @Query("token") webhookToken?: string,
+  ) {
+    this.webhookAuthService.assertAuthorized(webhookSecret, webhookToken);
     return this.chatService.handleVlmWebhook(body);
   }
 

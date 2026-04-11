@@ -1,16 +1,11 @@
 import { Module } from "@nestjs/common";
-import { TypeOrmModule } from "@nestjs/typeorm";
+import { SharedDatabaseModule } from "../shared/database/database.module";
+import { SharedStorageModule } from "../shared/storage/storage.module";
 import { TasksRepository } from "./tasks.repository";
 import { TasksService } from "./tasks.service";
-import { Task } from "./entities/task.entity";
-import { Session } from "./entities/session.entity";
-import { StorageModule } from "../shared/storage/storage.module";
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([Task, Session]),
-    StorageModule,
-  ],
+  imports: [SharedDatabaseModule, SharedStorageModule],
   providers: [TasksRepository, TasksService],
   exports: [TasksRepository, TasksService],
 })

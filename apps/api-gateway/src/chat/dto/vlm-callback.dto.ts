@@ -1,11 +1,13 @@
 import {
   IsArray,
+  IsEnum,
   IsObject,
   IsOptional,
   IsString,
   IsUUID,
 } from "class-validator";
-import { SessionHistoryItem } from "../../tasks/task.types";
+import { TaskStatus } from "../../common/task-status";
+import { SessionHistoryRecord } from "../../tasks/task.types";
 
 export class VlmCallbackDto {
   @IsUUID()
@@ -15,8 +17,8 @@ export class VlmCallbackDto {
   @IsOptional()
   session_id?: string;
 
-  @IsString()
-  status: string;
+  @IsEnum(TaskStatus)
+  status: TaskStatus;
 
   @IsOptional()
   @IsString()
@@ -28,7 +30,7 @@ export class VlmCallbackDto {
 
   @IsOptional()
   @IsArray()
-  history?: SessionHistoryItem[];
+  history?: SessionHistoryRecord[];
 
   @IsOptional()
   @IsString()
