@@ -162,4 +162,4 @@ async def status(job_id: UUID):
 
 if __name__ == "__main__":
     nest_asyncio.apply()
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run("services.reasoning_worker.api:app", host="0.0.0.0", port=port)

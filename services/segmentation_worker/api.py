@@ -98,4 +98,9 @@ async def get_status(session_id: UUID):
 if __name__ == "__main__":
     nest_asyncio.apply()
     reload_enabled = os.getenv("RELOAD", "").lower() in {"1", "true", "yes"}
-    uvicorn.run("api:app", host="0.0.0.0", port=port, reload=reload_enabled)
+    uvicorn.run(
+        "services.segmentation_worker.api:app",
+        host="0.0.0.0",
+        port=port,
+        reload=reload_enabled,
+    )
