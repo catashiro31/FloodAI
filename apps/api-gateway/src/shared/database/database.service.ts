@@ -1,33 +1,23 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { Pool } from "pg";
 
 @Injectable()
 export class SharedDatabaseService {
-  private readonly client: SupabaseClient;
+  private readonly pool: Pool;
   private readonly sessionsTableName: string;
   private readonly imageTasksTableName: string;
   private readonly reasoningTasksTableName: string;
   private readonly sessionHistoryTableName: string;
 
   constructor(private readonly configService: ConfigService) {
-    const supabaseUrl = this.configService.get<string>("SUPABASE_URL");
-    const supabaseKey =
-      this.configService.get<string>("SUPABASE_SERVICE_ROLE_KEY") ||
-      this.configService.get<string>("SUPABASE_KEY");
+    const connectionString = this.configService.get<string>("DATABASE_URL");
 
-    if (!supabaseUrl || !supabaseKey) {
-      throw new Error(
-        "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY/SUPABASE_KEY must be configured",
-      );
+    if (!connectionString) {
+      throw new Error("DATABASE_URL must be configured");
     }
 
-    this.client = createClient(supabaseUrl, supabaseKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    });
+    this.pool = new Pool({ connectionString });
 
     this.sessionsTableName =
       this.configService.get<string>("SUPABASE_SESSIONS_TABLE") || "sessions";
@@ -42,8 +32,8 @@ export class SharedDatabaseService {
       "session_history";
   }
 
-  getClient() {
-    return this.client;
+  getPool() {
+    return this.pool;
   }
 
   getSessionsTableName() {

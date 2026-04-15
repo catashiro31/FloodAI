@@ -6,5 +6,5 @@ pillow
 pydantic
 python-dotenv
 requests
-supabase
+psycopg2-binary
 uvicorn

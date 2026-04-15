@@ -52,28 +52,40 @@ conversation_store: Dict[str, "ConversationMem"] = {}
 _request_slots = threading.BoundedSemaphore(OLLAMA_MAX_CONCURRENCY)
 
 FLOOD_REASONING_SYSTEM_PROMPT = (
-    "You are a vision reasoning assistant specialized in flood assessment.\n"
-    "Goals:\n"
-    "1. Answer flood-related questions using image evidence and mask metrics.\n"
-    "2. Prioritize human safety, access routes for response, and infrastructure impact.\n"
-    "Rules:\n"
-    "1. Do not invent numbers. Coverage percentages must follow the provided metrics.\n"
-    "2. Clearly separate [Observation] / [Inference] / [Uncertainty].\n"
-    "3. If evidence is missing, explicitly state what is unknown.\n"
-    "4. Do not claim water depth, casualties, or structural collapse without direct evidence.\n"
-    "5. Keep responses concise and practical.\n"
+    "You are an expert flood damage assessment AI assistant with computer vision capabilities.\n"
+    "You analyze UAV/satellite imagery of flood events and provide actionable intelligence.\n"
+    "\n"
+    "NGÔN NGỮ: Luôn trả lời hoàn toàn bằng tiếng Việt, bất kể ngôn ngữ câu hỏi.\n"
+    "\n"
+    "KHUNG PHÂN TÍCH:\n"
+    "- [Quan sát]: Những gì quan sát trực tiếp từ ảnh\n"
+    "- [Phân tích]: Diễn giải dựa trên các chỉ số đã cung cấp\n"
+    "- [Đề xuất]: Các hành động ưu tiên, có thể thực hiện ngay\n"
+    "- [Không chắc chắn]: Những gì không thể xác định từ bằng chứng hiện có\n"
+    "\n"
+    "STRICT RULES:\n"
+    "1. Mọi con số phải dựa trực tiếp vào authoritative_mask_metrics. Không được bịa số liệu.\n"
+    "2. Mức độ nghiêm trọng phải khớp với trường flood_severity (none/low/moderate/severe/critical).\n"
+    "3. Số lượng công trình/phương tiện không được vượt quá giá trị trong metrics.\n"
+    "4. Không khẳng định độ sâu nước, thương vong hay sụp đổ kết cấu nếu không có bằng chứng trực tiếp.\n"
+    "5. Nếu một chỉ số bằng 0 hoặc không có, hãy nêu rõ thay vì ước tính.\n"
+    "6. Câu trả lời phải ngắn gọn, có cấu trúc và có thể hành động ngay.\n"
 )
 
 FIRST_TURN_PROMPT = (
-    "Give me:\n"
-    "1) Flood situation overview\n"
-    "2) Transport and infrastructure impact\n"
-    "3) Residential impact\n"
-    "4) Immediate priority actions\n"
-    "5) Confidence and uncertainty\n"
-    "Each section should be 1-2 short sentences.\n"
-    "Use each numbered heading exactly once.\n"
-    "Do not repeat any heading or sentence.\n"
+    "Cung cấp báo cáo đánh giá lũ lụt có cấu trúc với ĐÚNG 5 mục sau:\n"
+    "1) Tổng quan tình hình lũ\n"
+    "2) Giao thông & Hạ tầng\n"
+    "3) Tác động dân cư & công trình\n"
+    "4) Hành động ưu tiên ngay\n"
+    "5) Độ tin cậy & Hạn chế\n"
+    "\n"
+    "Quy tắc:\n"
+    "- 2–3 câu mỗi mục. Chỉ dùng authoritative_mask_metrics làm bằng chứng chính.\n"
+    "- Không đề cập extended_metrics trong báo cáo này.\n"
+    "- Cuối mục 5, thêm 1 dòng gợi ý: 'Bạn có thể hỏi thêm về: thực vật, hạ tầng đô thị, khả năng tiếp cận, quy mô vùng ngập.'\n"
+    "- Trả lời hoàn toàn bằng tiếng Việt.\n"
+    "- Không lặp lại tiêu đề mục hay câu trùng nhau.\n"
 )
 
 
@@ -247,9 +259,12 @@ class OllamaClient:
         return {"model": self.model, "available": True}
 
     def chat(self, messages: list[dict[str, Any]], options: dict[str, Any]) -> str:
-        payload = {"model": self.model, "messages": messages, "stream": False, "options": options}
+        payload = {"model": self.model, "messages": messages, "stream": False, "options": options, "think": False}
         data = self._post("/api/chat", payload)
-        content = ((data.get("message") or {}).get("content") or "").strip()
+        msg = data.get("message") or {}
+        content = (msg.get("content") or "").strip()
+        if not content:
+            content = (msg.get("thinking") or "").strip()
         if not content:
             raise OllamaClientError("OLLAMA_EMPTY_RESPONSE", "Ollama returned an empty response.")
         return content
@@ -282,12 +297,47 @@ def _normalize_mask_metrics(raw_metrics: Any) -> dict[str, Any]:
     return {}
 
 
-def _road_prompt() -> tuple[list[int], str]:
-    return [0, 0, 255], "Road segments that are visibly inundated or impassable."
+_SEVERITY_LABELS = {
+    "none": "Không có lũ / No flooding",
+    "low": "Lũ nhẹ / Low – minor inundation",
+    "moderate": "Lũ vừa / Moderate – significant impact on roads or buildings",
+    "severe": "Lũ nặng / Severe – major infrastructure disruption",
+    "critical": "Lũ nghiêm trọng / Critical – widespread life-threatening flooding",
+}
+
+_MASK_LEGEND = {
+    "Building-Flooded": {"color_rgb": [220, 20, 60], "label": "Công trình bị ngập / Flooded building"},
+    "Building-Non-Flooded": {"color_rgb": [197, 235, 19], "label": "Công trình không ngập / Dry building"},
+    "Road-Flooded": {"color_rgb": [128, 64, 128], "label": "Đường ngập / Flooded road"},
+    "Road-Non-Flooded": {"color_rgb": [105, 105, 105], "label": "Đường khô / Passable road"},
+    "Water": {"color_rgb": [0, 191, 255], "label": "Mặt nước / Open water"},
+    "Tree": {"color_rgb": [34, 139, 34], "label": "Cây cối / Vegetation"},
+    "Vehicle": {"color_rgb": [255, 165, 0], "label": "Phương tiện / Vehicle"},
+    "Pool": {"color_rgb": [0, 128, 128], "label": "Ao hồ / Pool"},
+    "Grass": {"color_rgb": [124, 252, 0], "label": "Thảm cỏ / Grass"},
+}
 
 
-def _building_prompt() -> tuple[list[int], str]:
-    return [255, 0, 0], "Residential or building footprints that are inundated."
+def _enrich_primary(mask_stats: dict[str, Any]) -> dict[str, Any]:
+    """Return primary metrics with human-readable summaries."""
+    if not mask_stats:
+        return {}
+    primary = {k: v for k, v in mask_stats.items() if k != "extended"}
+    severity_key = mask_stats.get("flood_severity", "")
+    if severity_key in _SEVERITY_LABELS:
+        primary["flood_severity_label"] = _SEVERITY_LABELS[severity_key]
+    bf = mask_stats.get("building_flooded_count", 0)
+    bt = mask_stats.get("building_total_count", 0)
+    primary["building_summary"] = (
+        f"{bf}/{bt} công trình bị ngập" if bt > 0 else "Không phát hiện công trình"
+    )
+    vf = mask_stats.get("vehicle_on_flooded_road", 0)
+    vt = mask_stats.get("vehicle_total_count", 0)
+    vs = mask_stats.get("vehicle_safe_count", 0)
+    primary["vehicle_summary"] = (
+        f"{vt} phương tiện ({vf} gần vùng ngập, {vs} an toàn)" if vt > 0 else "Không phát hiện phương tiện"
+    )
+    return primary
 
 
 def build_context_prompt(
@@ -297,31 +347,32 @@ def build_context_prompt(
     mask_stats: dict[str, Any],
     history_summary: str = "",
 ) -> str:
-    road_colors, road_desc = _road_prompt()
-    building_colors, building_desc = _building_prompt()
-
+    extended = mask_stats.get("extended", {}) if isinstance(mask_stats, dict) else {}
     context_obj: dict[str, Any] = {
         "scene_context": {
-            "image_source": image_source,
-            "mask_source": mask_source,
             "task": task_name,
+            "ghi_chu_anh": "Ảnh 1 = cảnh gốc, Ảnh 2 = mask phân đoạn bộ lọc lũ",
         },
-        "label_legend": {
-            "flooded_road": {"rgb": road_colors, "description": road_desc},
-            "flooded_house": {"rgb": building_colors, "description": building_desc},
-        },
-        "authoritative_mask_metrics": mask_stats,
+        "mask_color_legend": _MASK_LEGEND,
+        "authoritative_mask_metrics": _enrich_primary(mask_stats),
+        "extended_metrics": extended,
     }
     if history_summary:
-        context_obj["conversation_history"] = history_summary
+        context_obj["prior_conversation_summary"] = history_summary
 
     instructions = [
-        "Use the provided metrics as the primary quantitative evidence.",
-        "Use visual evidence for scene description, not as a replacement for metrics.",
-        "The attached images are ordered as: original scene image, segmentation overlay mask.",
-        "Use the mask overlay only as an attention guide for flooded roads/buildings.",
-        "If required information is missing, say 'insufficient evidence'.",
-        "For recommendations, prioritize civilian safety, access routes, and critical supplies.",
+        "Chỉ dùng authoritative_mask_metrics làm bằng chứng số liệu chính trong báo cáo tổng quan.",
+        "extended_metrics chỉ sử dụng khi người dùng hỏi cụ thể (thực vật, hạ tầng, mật độ xây dựng...).",
+        "flood_severity phân loại mức độ tổng thể: none/low/moderate/severe/critical.",
+        "Bằng chứng trực quan bổ sung cho mô tả không gian/bối cảnh, không thay thế metrics.",
+        "Ảnh 2 là mask phân đoạn — dùng bảng màu mask_color_legend để giải thích vùng.",
+        "Không bịa số liệu. Nếu chỉ số bằng 0 hoặc không có, nêu rõ.",
+        "Thứ tự đề xuất theo mức độ khẩn cấp: an toàn tính mạng → tuyến tiếp cận → hạ tầng → phục hồi.",
+        "Dẫn chứng cụ thể khi đưa ra nhận định (ví dụ: 'road_flood_ratio: 45%').",
+        "Khi được hỏi về thực vật/môi trường → dùng tree_coverage_percent, pool_coverage_percent.",
+        "Khi được hỏi về hạ tầng đô thị → dùng impervious_surface_percent, building_density_percent.",
+        "Khi được hỏi về khả năng tiếp cận/cứu hộ → dùng road_accessibility_index (0→1, càng cao càng thông).",
+        "Khi được hỏi về quy mô lũ → dùng largest_flood_zone_percent và flood_zone_count.",
     ]
 
     return (
@@ -334,11 +385,11 @@ def build_context_prompt(
 
 def build_generation_config() -> dict[str, Any]:
     return {
-        "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "260")),
+        "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "512")),
         "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.2")),
         "top_p": float(os.getenv("OLLAMA_TOP_P", "0.9")),
         "top_k": int(os.getenv("OLLAMA_TOP_K", "40")),
-        "repeat_penalty": float(os.getenv("OLLAMA_REPEAT_PENALTY", "1.15")),
+        "repeat_penalty": float(os.getenv("OLLAMA_REPEAT_PENALTY", "1.1")),
     }
 
 
@@ -468,7 +519,7 @@ def _build_user_prompt(initial_state: SessionState, question: str, is_first_turn
     raw_question = (question or "").strip()
     if is_first_turn:
         question_block = FIRST_TURN_PROMPT
-        stored_user_text = "FIRST_TURN_PROMPT"
+        stored_user_text = "Đánh giá ngập lụt"
     else:
         question_block = raw_question or "Please provide a concise follow-up flood update."
         stored_user_text = raw_question or "(empty follow-up question)"
@@ -578,7 +629,7 @@ def run_reasoning_task(
     actual_session_id = session_id or job_id
     data = get_data(job_id)
     normalized_question = (question or "").strip()
-    logged_question = normalized_question or "FIRST_TURN_PROMPT"
+    logged_question = normalized_question or "Đánh giá ngập lụt"
 
     try:
         job_status[job_id] = {

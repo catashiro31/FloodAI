@@ -8,7 +8,7 @@ project_root = os.path.abspath(os.path.join(current_dir, '..'))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-from FloodAI.model.fusion import DeepFusionModule
+from model.fusion import DeepFusionModule
 
 class UperNetHead(nn.Module):
     def __init__(self, in_channels_list, num_classes, pool_scales=(1, 2, 3, 6)):

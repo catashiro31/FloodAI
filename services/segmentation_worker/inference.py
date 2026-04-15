@@ -10,6 +10,7 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import base64
 import time
+from contextlib import nullcontext
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -54,10 +55,9 @@ class ComprehensiveVisualizer:
         
         if self.device == 'cuda':
             gpu_name = torch.cuda.get_device_name(0)
-            print(f"🚀 [GPU MODE] Đang nạp mô hình trên: {gpu_name}")
-            torch.backends.cudnn.benchmark = True
+            print(f"\U0001f680 [GPU MODE] Đang nạp mô hình trên: {gpu_name}")
         else:
-            print(f"🐢 [CPU MODE] Không tìm thấy GPU, đang chạy trên CPU (Chậm hơn)")
+            print(f"\U0001f422 [CPU MODE] Không tìm thấy GPU, đang chạy trên CPU (Chậm hơn)")
 
         self.model = FloodWizSSL(self.config.NUM_CLASSES, self.config.BACKBONE).to(self.device)
         
@@ -65,6 +65,7 @@ class ComprehensiveVisualizer:
         checkpoint = torch.load(model_path, map_location=self.device, weights_only=True)
         self.model.load_state_dict(checkpoint)
         self.model.eval()
+
         
         self.transform = A.Compose([
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),

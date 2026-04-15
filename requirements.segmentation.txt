@@ -11,7 +11,6 @@ pydantic
 python-dotenv
 python-multipart
 requests
-supabase
 timm
 torch
 torchvision

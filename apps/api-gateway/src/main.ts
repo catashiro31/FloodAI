@@ -1,6 +1,9 @@
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
+import { NestExpressApplication } from "@nestjs/platform-express";
 import { json, urlencoded } from "express";
+import * as fs from "fs";
+import * as path from "path";
 import { AppModule } from "./app.module";
 
 function resolveCorsOrigins(): true | string[] {
@@ -19,7 +22,12 @@ function resolveCorsOrigins(): true | string[] {
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  const uploadsDir =
+    process.env.UPLOADS_DIR || path.join(process.cwd(), "uploads");
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  app.useStaticAssets(uploadsDir, { prefix: "/uploads" });
 
   app.use(json({ limit: "50mb" }));
   app.use(urlencoded({ extended: true, limit: "50mb" }));

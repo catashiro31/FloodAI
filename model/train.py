@@ -12,11 +12,11 @@ project_root = os.path.abspath(os.path.join(current_dir, '..'))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-from FloodAI.model.config import Config
-from FloodAI.model.dataloader import FloodNetHeavyDataset
-from FloodAI.model.model import HeavyGLNet
-from FloodAI.model.loss import JointLoss
-from FloodAI.model.utils import seed_everything, seed_worker, train_one_epoch
+from model.config import Config
+from model.dataloader import FloodNetHeavyDataset
+from model.model import HeavyGLNet
+from model.loss import JointLoss
+from model.utils import seed_everything, seed_worker, train_one_epoch
 
 def main():
     seed_everything()

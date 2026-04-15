@@ -8,7 +8,10 @@ import { TasksModule } from "./tasks/tasks.module";
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: [".env", "apps/api-gateway/.env"],
+    }),
     TasksModule,
     ConversationModule,
     OrchestrationModule,

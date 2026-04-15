@@ -10,12 +10,12 @@ from tqdm import tqdm
 import argparse
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, '..'))
+project_root = os.path.abspath(os.path.join(current_dir, '..', '..'))
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-from FloodAI.model.semi_supervised_learning.config_ssl import SSLConfig
-from FloodAI.model.semi_supervised_learning.model_ssl import FloodWizSSL
+from model.semi_supervised_learning.config_ssl import SSLConfig
+from model.semi_supervised_learning.model_ssl import FloodWizSSL
 
 # Bảng màu hiển thị (RGB) chuẩn cho 10 lớp FloodNet
 COLOR_MAP = {

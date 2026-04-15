@@ -194,26 +194,33 @@ socket.on('uploadStatus', (data) => {
         return;
     }
 
+    // Task Completed is a duplicate signal — actual reply already arrived via receiveMessage
+    if (data.status && data.status.includes('Task Completed')) {
+        return;
+    }
+
     // Other status updates (queued, processing)
     if (lastBotMsg) {
         if (data.status === 'Processing segmentation' && data.details?.progress !== undefined) {
             lastBotMsg.progress = data.details.progress;
             lastBotMsg.estSecondsRemaining = data.details.estSecondsRemaining;
-
-            // Cập nhật text để người dùng thấy rõ
             if (data.details.progress < 100) {
                 lastBotMsg.text = `⏳ Đang phân tích dữ liệu... ${data.details.progress}%`;
             } else {
                 lastBotMsg.text = `⏳ Đang tổng hợp kết quả...`;
             }
+            if (!patchBotMsg(lastBotMsg.id, lastBotMsg.text, lastBotMsg.progress, lastBotMsg.estSecondsRemaining)) {
+                renderAnalysisMessages();
+            }
         } else {
             lastBotMsg.text = `⏳ ${data.status}...`;
-            // Reset progress nếu status chuyển sang cái khác (như VLM)
             if (data.status !== 'Processing segmentation') {
                 lastBotMsg.progress = undefined;
             }
+            if (!patchBotMsg(lastBotMsg.id, lastBotMsg.text, lastBotMsg.progress, lastBotMsg.estSecondsRemaining)) {
+                renderAnalysisMessages();
+            }
         }
-        renderAnalysisMessages();
     }
 });
 
@@ -253,7 +260,10 @@ socket.on('receiveMessage', (data) => {
     if (interimReply) {
         currentTaskStatus = 'processing_vlm';
         lockChat();
-        renderAnalysisMessages(true);
+        const updMsg = thinkingIdx !== -1 ? analysisMessages[thinkingIdx] : analysisMessages[analysisMessages.length - 1];
+        if (!updMsg?.id || !patchBotMsg(updMsg.id, updMsg.text, updMsg.progress, updMsg.estSecondsRemaining)) {
+            renderAnalysisMessages(true);
+        }
         fetchSessions();
         return;
     }
@@ -327,7 +337,7 @@ function renderMetricsPanel(metrics) {
     const statusEl = document.getElementById('metric-status');
     if (statusEl) {
         statusEl.innerHTML = Boolean(metrics.is_flooded)
-            ? '<span class="inline-flex items-center gap-1.5 rounded-full bg-red-500/20 px-3 py-1 text-[10px] font-black text-red-400 uppercase tracking-widest"><i data-lucide="alert-triangle" class="h-3 w-3"></i> Khu vực Ngập</span>'
+            ? '<span class="inline-flex items-center gap-1.5 rounded-full bg-red-500/20 px-3 py-1 text-[10px] font-black text-red-400 uppercase tracking-widest"><i data-lucide="alert-triangle" class="h-3 w-3"></i> Khu vực ngập</span>'
             : '<span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1 text-[10px] font-black text-emerald-400 uppercase tracking-widest"><i data-lucide="shield-check" class="h-3 w-3"></i> An toàn</span>';
     }
 
@@ -344,8 +354,12 @@ function renderMetricsPanel(metrics) {
     if (bldFloodEl) bldFloodEl.textContent = `${toMetricNumber(metrics.building_flooded_count)}`;
     if (bldTotalEl) bldTotalEl.textContent = `/ ${toMetricNumber(metrics.building_total_count)}`;
 
-    const vehicleEl = document.getElementById('metric-vehicle');
-    if (vehicleEl) vehicleEl.textContent = `${toMetricNumber(metrics.vehicle_on_flooded_road)}`;
+    const vehicleFloodEl = document.getElementById('metric-vehicle-flood');
+    const vehicleTotalEl = document.getElementById('metric-vehicle-total');
+    const vFlood = toMetricNumber(metrics.vehicle_on_flooded_road);
+    const vTotal = toMetricNumber(metrics.vehicle_total_count);
+    if (vehicleFloodEl) vehicleFloodEl.textContent = `${vFlood}`;
+    if (vehicleTotalEl) vehicleTotalEl.textContent = vTotal > 0 ? `/ ${vTotal}` : '';
 
     const coverageEl = document.getElementById('metric-coverage');
     if (coverageEl) coverageEl.textContent = `${toMetricNumber(metrics.flood_coverage_percent)}%`;
@@ -641,7 +655,7 @@ function switchView(view) {
 
     document.querySelectorAll('.nav-link').forEach(item => {
         const text = item.textContent.trim().toLowerCase();
-        if ((view === 'analysis' && text === 'assessment') || (view === 'gallery' && text === 'mask gallery')) {
+        if ((view === 'analysis' && text === 'đánh giá') || (view === 'gallery' && text === 'bộ sưu tập')) {
             item.classList.add('text-brand-primary');
             item.classList.remove('text-ui-muted');
         } else {
@@ -756,23 +770,44 @@ async function renderGalleryForSession(sid) {
     }
 }
 
+const _SEVERITY_CONFIG = {
+    none:     { color: 'emerald', label: 'Không ngập' },
+    low:      { color: 'yellow',  label: 'Lũ nhẹ' },
+    moderate: { color: 'orange',  label: 'Lũ vừa' },
+    severe:   { color: 'red',     label: 'Lũ nặng' },
+    critical: { color: 'rose',    label: 'Nghiêm trọng' },
+};
+
 function buildMetricsBadgesHtml(metrics) {
     const roadFloodRatio = toMetricNumber(metrics.road_flood_ratio);
     const buildingFloodedCount = toMetricNumber(metrics.building_flooded_count);
     const buildingTotalCount = toMetricNumber(metrics.building_total_count);
     const vehicleOnFloodedRoad = toMetricNumber(metrics.vehicle_on_flooded_road);
+    const vehicleTotalCount = toMetricNumber(metrics.vehicle_total_count);
     const floodCoveragePercent = toMetricNumber(metrics.flood_coverage_percent);
+    const floodZoneCount = toMetricNumber(metrics.flood_zone_count);
+
+    const severityKey = (metrics.flood_severity || 'none').toLowerCase();
+    const sev = _SEVERITY_CONFIG[severityKey] || _SEVERITY_CONFIG.none;
+    const sevBadge = `<span class="rounded-full bg-${sev.color}-500/20 px-2.5 py-1 text-[9px] font-black text-${sev.color}-400 uppercase flex items-center gap-1"><i data-lucide="alert-triangle" class="h-3 w-3"></i> ${sev.label}</span>`;
+
     const statusBadge = Boolean(metrics.is_flooded)
         ? '<span class="rounded-full bg-red-500/20 px-2.5 py-1 text-[9px] font-black text-red-400 uppercase flex items-center gap-1"><i data-lucide="alert-triangle" class="h-3 w-3"></i> Ngập</span>'
         : '<span class="rounded-full bg-emerald-500/20 px-2.5 py-1 text-[9px] font-black text-emerald-400 uppercase flex items-center gap-1"><i data-lucide="shield-check" class="h-3 w-3"></i> An toàn</span>';
 
+    const zoneHtml = floodZoneCount > 0
+        ? `<span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="map-pin" class="h-3 w-3 text-brand-primary"></i> Vùng ngập: <strong class="text-brand-primary">${floodZoneCount}</strong></span>`
+        : '';
+
     return `
         <div class="flex flex-wrap items-center gap-3">
             ${statusBadge}
+            ${sevBadge}
             <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="road" class="h-3 w-3 text-brand-primary"></i> Đường ngập: <strong class="text-brand-primary">${roadFloodRatio}%</strong></span>
             <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="building" class="h-3 w-3 text-red-400"></i> Nhà ngập: <strong class="text-red-400">${buildingFloodedCount}</strong>/${buildingTotalCount}</span>
-            <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="car" class="h-3 w-3 text-orange-400"></i> Xe: <strong class="text-orange-400">${vehicleOnFloodedRoad}</strong></span>
+            <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="car" class="h-3 w-3 text-orange-400"></i> Xe ngập: <strong class="text-orange-400">${vehicleOnFloodedRoad}</strong>/${vehicleTotalCount}</span>
             <span class="text-[10px] font-bold text-ui-muted flex items-center gap-1"><i data-lucide="droplets" class="h-3 w-3 text-brand-primary"></i> Phủ ngập: <strong class="text-brand-primary">${floodCoveragePercent}%</strong></span>
+            ${zoneHtml}
         </div>
     `;
 }
@@ -890,7 +925,7 @@ function buildWelcomeStateMarkup() {
                 <div class="analysis-empty-state__logo">
                     <i data-lucide="waves"></i>
                 </div>
-                <p class="text-[10px] font-black uppercase tracking-[0.28em] text-brand-primary/80">Flood Analysis</p>
+                <p class="text-[10px] font-black uppercase tracking-[0.28em] text-brand-primary/80">Phân tích lũ lụt</p>
                 <h2 class="mt-3 text-4xl font-black tracking-tight text-ui-text">FloodWiz</h2>
                 <p class="mt-4 text-sm leading-relaxed text-ui-muted">
                     Chọn một ảnh UAV/drone trong khung upload bên dưới để bắt đầu segment cho session này.
@@ -912,6 +947,36 @@ function buildWelcomeStateMarkup() {
     `;
 }
 
+/**
+ * Surgically update only the processing bot message in the DOM.
+ * Returns true if the element was found and patched, false if a full re-render is needed.
+ */
+function patchBotMsg(msgId, text, progress, estSeconds) {
+    if (!analysisChatHistoryEl || !msgId) return false;
+    const msgEl = analysisChatHistoryEl.querySelector(`[data-msg-id="${msgId}"]`);
+    if (!msgEl) return false;
+
+    if (text !== undefined) {
+        const textEl = msgEl.querySelector('[data-msg-text]');
+        if (textEl) textEl.innerHTML = escapeHtml(normalizeText(text)).replace(/\n/g, '<br>');
+    }
+
+    if (progress !== undefined) {
+        const progressValue = Math.min(Math.max(toMetricNumber(progress), 0), 100);
+        const barEl = msgEl.querySelector('[data-msg-progress-bar]');
+        const pctEl = msgEl.querySelector('[data-msg-progress-pct]');
+        const estEl = msgEl.querySelector('[data-msg-progress-est]');
+        if (barEl) barEl.style.width = `${progressValue}%`;
+        if (pctEl) pctEl.textContent = `${progressValue}%`;
+        if (estEl) {
+            const est = Math.max(toMetricNumber(estSeconds), 0);
+            if (est > 0) { estEl.textContent = `Còn khoảng ${est}s...`; estEl.style.display = ''; }
+            else { estEl.style.display = 'none'; }
+        }
+    }
+    return true;
+}
+
 function renderAnalysisMessages(scrollToBottom = false) {
     if (!analysisChatHistoryEl) return;
     syncAnalysisShellState();
@@ -930,13 +995,14 @@ function renderAnalysisMessages(scrollToBottom = false) {
         const imageUrls = normalizeImageUrls(msg.imageUrls);
         const hasImages = imageUrls.length > 0;
         const isBot = msg.sender === "bot" || msg.sender === "assistant";
-        const authorLabel = isBot ? "Neural Engine" : "Người dùng";
+        const authorLabel = isBot ? "FloodWiz AI" : "Người dùng";
 
         if (!hasText && !hasImages && !(isBot && msg.progress !== undefined)) {
             return '';
         }
 
-        const imageHtml = hasImages
+        const showImages = hasImages && !isBot;
+        const imageHtml = showImages
             ? `<div class="mb-3 flex flex-wrap gap-3 ${msg.sender === "user" ? "justify-end" : ""}">
                     ${imageUrls.map((url, idx) => `
                         <div class="overflow-hidden rounded-2xl border border-white/10 bg-black/20 shadow-lg">
@@ -948,7 +1014,7 @@ function renderAnalysisMessages(scrollToBottom = false) {
 
         const textHtml = hasText
             ? `<div class="rounded-2xl p-5 shadow-sm ${isBot ? "rounded-bl-none glass-panel" : "chat-bubble-user"}">
-                    <p class="text-sm font-medium leading-relaxed whitespace-pre-wrap">${escapeHtml(safeText).replace(/\n/g, '<br>')}</p>
+                    <p data-msg-text class="text-base font-medium leading-relaxed whitespace-pre-wrap">${escapeHtml(safeText).replace(/\n/g, '<br>')}</p>
                </div>`
             : '';
 
@@ -966,21 +1032,21 @@ function renderAnalysisMessages(scrollToBottom = false) {
                               <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-primary opacity-75"></span>
                               <span class="relative inline-flex rounded-full h-2 w-2 bg-brand-primary"></span>
                             </span>
-                            Neural Progress
+                            Tiến trình
                         </span>
-                        <span class="text-[10px] font-black text-brand-primary">${progressValue}%</span>
+                        <span data-msg-progress-pct class="text-[10px] font-black text-brand-primary">${progressValue}%</span>
                     </div>
                     <div class="h-2 w-full bg-white/5 rounded-full overflow-hidden border border-white/5 p-[1px]">
-                        <div class="h-full bg-gradient-to-r from-brand-primary/40 to-brand-primary rounded-full transition-all duration-700 cubic-bezier(0.4, 0, 0.2, 1)" style="width: ${progressValue}%"></div>
+                        <div data-msg-progress-bar class="h-full bg-gradient-to-r from-brand-primary/40 to-brand-primary rounded-full transition-all duration-700 cubic-bezier(0.4, 0, 0.2, 1)" style="width: ${progressValue}%"></div>
                     </div>
-                    ${estSecondsRemaining > 0 ? `<p class="mt-1.5 text-[9px] font-bold text-ui-muted opacity-50 uppercase tracking-widest text-right animate-pulse">Còn khoảng ${estSecondsRemaining}s...</p>` : ''}
+                    <p data-msg-progress-est class="mt-1.5 text-[9px] font-bold text-ui-muted opacity-50 uppercase tracking-widest text-right animate-pulse" ${estSecondsRemaining > 0 ? '' : 'style="display:none"'}>${estSecondsRemaining > 0 ? `Còn khoảng ${estSecondsRemaining}s...` : ''}</p>
                </div>`;
         })();
 
         const iconName = isBot ? "bot" : "user";
 
         return `
-            <div class="flex gap-5 ${msg.sender === "user" ? "flex-row-reverse" : ""} animate-slide-up">
+            <div class="flex gap-5 ${msg.sender === "user" ? "flex-row-reverse" : ""} animate-slide-up" data-msg-id="${msg.id}">
                 <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl ${isBot ? "bg-brand-primary/10 text-brand-primary" : "bg-white/5 text-ui-muted"}">
                     <i data-lucide="${iconName}" class="w-5 h-5"></i>
                 </div>

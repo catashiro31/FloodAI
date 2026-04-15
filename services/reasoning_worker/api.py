@@ -17,11 +17,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 from utils.reasoning.db_handler import (
+    DATABASE_URL,
     STATUS_COLUMN,
     TABLE_NAME,
     VLM_OUTPUT_COLUMN,
     get_data,
-    supabase,
     update_data,
 )
 
@@ -62,11 +62,12 @@ class ReasoningRequest(BaseModel):
 
 @app.get("/health")
 async def health_check():
-    healthy = client is not None and supabase is not None
+    db_ok = DATABASE_URL is not None
+    healthy = client is not None and db_ok
     return {
         "status": "healthy" if healthy else "degraded",
         "model_loaded": client is not None,
-        "db_connected": supabase is not None,
+        "db_connected": db_ok,
         "model": os.getenv("OLLAMA_MODEL", "gemma4:e2b-it-q4_K_M"),
         "ollama_base_url": os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
     }

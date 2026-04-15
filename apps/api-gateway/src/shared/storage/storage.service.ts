@@ -1,47 +1,32 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
-
-interface SupabaseStorageFile {
-  name: string;
-}
+import * as fs from "fs";
+import * as path from "path";
 
 @Injectable()
 export class SharedStorageService {
-  private readonly client: SupabaseClient;
-  private readonly bucketName: string;
+  private readonly uploadsDir: string;
+  private readonly baseUrl: string;
   private readonly originalsPrefix: string;
 
   constructor(private readonly configService: ConfigService) {
-    const supabaseUrl = this.configService.get<string>("SUPABASE_URL");
-    const supabaseKey =
-      this.configService.get<string>("SUPABASE_SERVICE_ROLE_KEY") ||
-      this.configService.get<string>("SUPABASE_KEY");
-
-    if (!supabaseUrl || !supabaseKey) {
-      throw new Error(
-        "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY/SUPABASE_KEY must be configured",
-      );
-    }
-
-    this.client = createClient(supabaseUrl, supabaseKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    });
-
-    this.bucketName =
-      this.configService.get<string>("SUPABASE_IMAGES_BUCKET") ||
-      this.configService.get<string>("SUPABASE_BUCKET") ||
-      "images";
+    this.uploadsDir =
+      this.configService.get<string>("UPLOADS_DIR") ||
+      path.join(process.cwd(), "uploads");
+    this.baseUrl =
+      this.configService.get<string>("GATEWAY_BASE_URL") ||
+      "http://localhost:5000";
     this.originalsPrefix =
       this.configService.get<string>("SUPABASE_ORIGINALS_PREFIX") ||
       "originals";
+
+    fs.mkdirSync(path.join(this.uploadsDir, this.originalsPrefix), {
+      recursive: true,
+    });
   }
 
   getBucketName() {
-    return this.bucketName;
+    return "local";
   }
 
   getOriginalsPrefix() {
@@ -55,29 +40,18 @@ export class SharedStorageService {
   async findFile(
     fileName: string,
     prefix = this.originalsPrefix,
-  ): Promise<SupabaseStorageFile[]> {
-    const { data, error } = await this.client.storage
-      .from(this.bucketName)
-      .list(prefix, { search: fileName, limit: 10 });
-
-    if (error) {
-      throw error;
-    }
-
-    return (data ?? []).filter((file) => file.name === fileName);
+  ): Promise<{ name: string }[]> {
+    const fullPath = path.join(this.uploadsDir, prefix, fileName);
+    return fs.existsSync(fullPath) ? [{ name: fileName }] : [];
   }
 
-  async uploadFile(filePath: string, buffer: Buffer, contentType: string) {
-    const { error } = await this.client.storage
-      .from(this.bucketName)
-      .upload(filePath, buffer, {
-        contentType,
-        upsert: false,
-      });
-
-    if (error) {
-      throw error;
+  async uploadFile(filePath: string, buffer: Buffer, _contentType: string) {
+    const fullPath = path.join(this.uploadsDir, filePath);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    if (fs.existsSync(fullPath)) {
+      throw new Error(`File already exists: ${filePath}`);
     }
+    fs.writeFileSync(fullPath, buffer);
   }
 
   async ensureFile(
@@ -92,15 +66,11 @@ export class SharedStorageService {
         throw error;
       }
     }
-
     return this.getPublicUrl(filePath);
   }
 
   getPublicUrl(filePath: string) {
-    const { data } = this.client.storage
-      .from(this.bucketName)
-      .getPublicUrl(filePath);
-    return data.publicUrl;
+    return `${this.baseUrl}/uploads/${filePath}`;
   }
 
   private isAlreadyExistsError(error: unknown) {
